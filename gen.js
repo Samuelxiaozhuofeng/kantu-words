@@ -67,7 +67,7 @@ export async function renderGen(view) {
     if (!path.length) return drawTopics(FOLDERS);
     const key = path.join('›');
     if (!cache[key]) {
-      $('#topics').innerHTML = '<span class="muted">AI 在想…</span>';
+      $('#topics').innerHTML = '<span class="muted thinking">AI 在想<i>.</i><i>.</i><i>.</i></span>';
       try {
         const list = await listTopics(path);
         if (!list.length) throw new Error('AI 没想出子话题，换一个试试'); // 空结果不进缓存，下次还能重问

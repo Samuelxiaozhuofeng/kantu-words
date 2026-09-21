@@ -96,6 +96,10 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;paddi
 .topics{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px}
 .topics button{font-size:17px;padding:12px 20px}
 .topics button .muted{font-size:12px;font-weight:600}
+.thinking{padding:12px 4px;font-size:17px}
+.thinking i{font-style:normal;animation:blink 1.2s infinite}
+.thinking i:nth-child(2){animation-delay:.2s}.thinking i:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{opacity:.15}40%{opacity:1}}
 .topic{display:inline-flex;align-items:center;gap:6px}
 .topic input{width:18px;height:18px;margin:0;flex:none}
 .genbar{position:sticky;bottom:0;background:#fff;border-top:1.5px solid var(--line);padding:10px 0;margin:0}
