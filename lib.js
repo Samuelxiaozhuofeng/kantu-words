@@ -18,6 +18,12 @@ export const db = {
   audioGet: k => tx('audio', 'readonly', s => s.get(k)),
   audioPut: (k, v) => tx('audio', 'readwrite', s => s.put(v, k)),
 };
+// 归档 / 放回：只动 archived 一个字段，其他原样；放回就把字段删掉，跟老课一个样。读和写放同一个事务里，别拿旧快照盖掉别处刚存的
+export const setArchived = (id, on) => tx('lessons', 'readwrite', s => {
+  const r = s.get(id);
+  r.onsuccess = () => { const l = r.result; if (!l) return; if (on) l.archived = Date.now(); else delete l.archived; s.put(l); };
+  return r;
+});
 export const settings = {
   get: () => ({ voice: 'en-US-JennyNeural', hintMode: 'always', studyMode: 'type', wrong: {}, ...JSON.parse(localStorage.kantu || '{}') }),
   set: o => localStorage.kantu = JSON.stringify(o),

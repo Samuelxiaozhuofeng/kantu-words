@@ -1,5 +1,5 @@
 // 学习页：五种练法（打英文 / 听音点图 / 听句子点图 / 选英文 / 选中文），框亮起或全部可点，走完出结果
-import { db, esc, settings, LANGS, langOf, wrongEntries } from './lib.js';
+import { db, esc, toast, settings, LANGS, langOf, setArchived, wrongEntries } from './lib.js';
 import { speak } from './tts.js';
 import { boxStyle } from './editor.js';
 
@@ -178,9 +178,14 @@ export async function renderStudy(view, id, given) {
       else delete book[keyOf(q)];
     }
     settings.set({ ...settings.get(), wrong: book });
+    // 整课练完才有课可归档（错题本混练没有单一课）；整课从头全对才突出，只练一部分全对不算
+    const lesson = id !== 'wrong' && items[0]?.lesson;
+    const archBtn = !lesson ? '' : lesson.archived ? '<button disabled>已归档</button>' : `<button id="arch" class="${!given && first === n ? 'primary' : ''}">归档这一课</button>`;
     view.innerHTML = `<div class="result"><div class="score">${first} / ${n}</div><p class="muted">一次答对</p>
       <ul>${items.map((q, k) => `<li><span class="k ${done.get(k) ? 'ok' : 'no'}">${done.get(k) ? '✓' : '△'}</span><b>${esc(q.item.en)}</b><span class="muted">${esc(q.item.zh)}</span></li>`).join('')}</ul>
-      <div class="bar"><button id="again" class="primary">再来一遍</button>${missed.length ? `<button id="retry">再练错的 ${missed.length} 个</button>` : ''}<a class="btn" href="#/">回列表</a></div></div>`;
+      <div class="bar"><button id="again" class="primary">再来一遍</button>${missed.length ? `<button id="retry">再练错的 ${missed.length} 个</button>` : ''}${archBtn}<a class="btn" href="#/">回列表</a></div></div>`;
+    const arch = view.querySelector('#arch');
+    if (arch) arch.onclick = async () => { await setArchived(id, true); toast('已收进「已学完」'); location.hash = '#/'; };
     view.querySelector('#again').onclick = () => renderStudy(view, id, quiz0); // 重练刚才这份题单，错题本练完全对也不会变成空页
     const retry = view.querySelector('#retry');
     if (retry) retry.onclick = () => renderStudy(view, id, missed);
