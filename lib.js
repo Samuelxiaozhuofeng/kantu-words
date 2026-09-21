@@ -51,6 +51,15 @@ export const langOf = lesson => LANGS[lesson?.lang] ? lesson.lang : 'en'; // 老
 export const FOLDERS = ['家居', '厨房', '衣物', '食物', '交通', '学校', '办公', '动物', '自然', '运动', '医疗', '城市'];
 export const allFolders = () => [...new Set([...FOLDERS, ...(settings.get().folders || [])])]; // 内置 12 个 + 用户自己加的（settings.folders）
 export const folderOf = lesson => typeof lesson?.folder === 'string' && lesson.folder ? lesson.folder : '';
+// 学习页快捷键：存 settings.keys，值是「修饰键+按键码」（Ctrl+Quote），按键用 e.code 不受输入法 / Shift 影响；没设的用默认
+export const KEYS = { say: 'Ctrl+Quote', show: 'Ctrl+Semicolon', mark: 'Ctrl+Slash' };
+export const KEY_NAMES = { say: '发音', show: '答案', mark: '收进 / 移出错题本' };
+export const keysOf = () => ({ ...KEYS, ...(settings.get().keys || {}) });
+export const comboOf = e => [e.ctrlKey && 'Ctrl', e.metaKey && 'Meta', e.altKey && 'Alt', e.shiftKey && 'Shift', e.code].filter(Boolean).join('+');
+const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
+const KEY_LABELS = { Ctrl: MAC ? '⌃' : 'Ctrl', Meta: MAC ? '⌘' : 'Win', Alt: MAC ? '⌥' : 'Alt', Shift: MAC ? '⇧' : 'Shift', Quote: "'", Semicolon: ';', Slash: '/', Period: '.', Comma: ',', BracketLeft: '[', BracketRight: ']', Backslash: '\\', Minus: '-', Equal: '=', Backquote: '`', Space: '空格' };
+export const keyParts = combo => combo.split('+').map(k => KEY_LABELS[k] || k.replace(/^(Key|Digit|Arrow)/, ''));
+export const keyLabel = combo => keyParts(combo).join(MAC ? ' ' : '+');
 export const dots = s => `${s}<span class="dots"><i>.</i><i>.</i><i>.</i></span>`; // 「生图中」+ 三个轮流闪的点，等 AI 的地方都用它
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export function toast(msg, ms = 2500) {

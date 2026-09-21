@@ -1,5 +1,5 @@
 // 学习页：五种练法（打英文 / 听音点图 / 听句子点图 / 选英文 / 选中文），框亮起或全部可点，走完出结果
-import { db, esc, toast, settings, LANGS, langOf, setArchived, wrongEntries } from './lib.js';
+import { db, esc, toast, settings, LANGS, langOf, setArchived, wrongEntries, keysOf, keyParts, comboOf } from './lib.js';
 import { speak } from './tts.js';
 import { boxStyle } from './editor.js';
 
@@ -18,12 +18,15 @@ export const isRight = (input, it, lang = 'en') => {
 
 const MODES = { type: '打单词', tap: '听音点图', sent: '听句子点图', pickEn: '选单词', pickZh: '选中文' };
 const HINTS = { always: '一直显示', wrong: '答错后显示', never: '不显示' };
-const TIPS = {
-  type: '<kbd>Enter</kbd> 提交 · <kbd>Ctrl</kbd>+<kbd>\'</kbd> 发音 · <kbd>Ctrl</kbd>+<kbd>;</kbd> 答案',
-  tap: '听发音，点图里对应的物品 · <kbd>Ctrl</kbd>+<kbd>\'</kbd> 再听 · <kbd>Ctrl</kbd>+<kbd>;</kbd> 答案',
-  sent: '听句子，点图里说到的物品 · <kbd>Ctrl</kbd>+<kbd>\'</kbd> 再听 · <kbd>Ctrl</kbd>+<kbd>;</kbd> 答案',
-  pick: '<kbd>1</kbd>–<kbd>4</kbd> 选 · <kbd>Ctrl</kbd>+<kbd>\'</kbd> 发音 · <kbd>Ctrl</kbd>+<kbd>;</kbd> 答案',
-};
+const NEXTS = [[1, '自动下一题'], [0, '答完停住']];
+const kbd = combo => keyParts(combo).map(k => `<kbd>${esc(k)}</kbd>`).join('+');
+// 提示条：快捷键按设置里的来；停住模式多一句 Enter 下一题
+const tips = (mode, keys, autoNext) => ({
+  type: '<kbd>Enter</kbd> 提交',
+  tap: `听发音，点图里对应的物品`,
+  sent: `听句子，点图里说到的物品`,
+  pickEn: '<kbd>1</kbd>–<kbd>4</kbd> 选', pickZh: '<kbd>1</kbd>–<kbd>4</kbd> 选',
+}[mode] + ` · ${kbd(keys.say)} 发音 · ${kbd(keys.show)} 答案 · ${kbd(keys.mark)} 错题本` + (autoNext ? '' : ' · <kbd>Enter</kbd> 下一题'));
 const shuffle = a => { for (let k = a.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [a[k], a[j]] = [a[j], a[k]]; } return a; };
 
 // 三种入口共用题单：整课 / 错题本 / 本次错的。id === 'wrong' 不是课程 id，别拿去 db.get
@@ -50,6 +53,10 @@ export async function renderStudy(view, id, given) {
   const urls = new Map();
   const urlOf = l => { if (!urls.has(l.id)) urls.set(l.id, URL.createObjectURL(l.image)); return urls.get(l.id); };
   let i = 0, wrong = 0, revealed = false, hintMode = s.hintMode, choices = [], bad = new Set(), stageId = '';
+  const keys = keysOf(); let autoNext = s.autoNext !== false; // 答对后自动下一题（默认）还是停在答案上看
+  const keyOf = q => q.lesson.id + '|' + q.item.en;
+  // 错题本随答随写：没一次答对的当场记进去，勾选框能立刻反映、中途退出也不丢
+  const setBook = (k, on) => { const b = { ...settings.get().wrong }; if (on) b[k] ||= Date.now(); else delete b[k]; settings.set({ ...settings.get(), wrong: b }); };
   // 提示区放什么：打英文 / 选英文时给中文，听音点图 / 选中文时给英文，听句子点图给句子（没有就给词）
   const hintOf = it => mode === 'type' || mode === 'pickEn' ? it.zh : mode === 'sent' ? (it.sent || it.en) : it.en;
   const label = it => mode === 'pickZh' && it.zh ? it.zh : it.en;
@@ -59,7 +66,8 @@ export async function renderStudy(view, id, given) {
   view.innerHTML = `<div class="study ${mode}" tabindex="-1">
     <div class="top"><span class="step"><span id="prog"></span><small>/ ${n}</small></span><b id="title"></b>
       <span class="segs"><span class="seg" id="modeSeg">${Object.entries(MODES).filter(([k]) => hasSent || k !== 'sent').map(([k, v]) => `<button data-mode="${k}" class="${k === mode ? 'on' : ''}">${v}</button>`).join('')}</span>
-      <span class="seg" id="hintSeg">${Object.entries(HINTS).map(([k, v]) => `<button data-m="${k}">${v}</button>`).join('')}</span></span></div>
+      <span class="seg" id="hintSeg">${Object.entries(HINTS).map(([k, v]) => `<button data-m="${k}">${v}</button>`).join('')}</span>
+      <span class="seg" id="nextSeg">${NEXTS.map(([k, v]) => `<button data-n="${k}" class="${+k === +autoNext ? 'on' : ''}">${v}</button>`).join('')}</span></span></div>
     <div class="progress"><i id="bar"></i></div>
     <div class="two">
       <div class="stage" id="stage"></div>
@@ -70,13 +78,21 @@ export async function renderStudy(view, id, given) {
         <div class="answer" id="ans"></div>
         <div class="bar">
           <button id="prev" title="上一个">‹</button><button id="say">🔊 发音</button><button id="show">答案</button>${mode === 'type' ? '<button id="submit" class="primary">提交 ⏎</button>' : ''}<button id="next" title="下一个">›</button>
+          <label class="chk"><input type="checkbox" id="mark"> 错题本</label>
         </div>
-        <p class="muted tips">${TIPS[pick ? 'pick' : mode]}</p>
+        <p class="muted tips">${tips(mode, keys, autoNext)}</p>
       </div>
     </div></div>`;
   const $ = q => view.querySelector(q), inp = $('#in'), root = $('.study');
   $('#modeSeg').onclick = e => { const m = e.target.dataset.mode; if (m && m !== mode) { settings.set({ ...settings.get(), studyMode: m }); renderStudy(view, id, given); } };
   $('#hintSeg').onclick = e => { if (e.target.dataset.m) { hintMode = e.target.dataset.m; settings.set({ ...settings.get(), hintMode }); show(); } };
+  // 切开关不重画页面（进度别丢），只换按钮高亮和提示条
+  $('#nextSeg').onclick = e => {
+    const v = e.target.dataset.n; if (!v) return;
+    autoNext = !!+v; settings.set({ ...settings.get(), autoNext });
+    for (const b of $('#nextSeg').children) b.classList.toggle('on', +b.dataset.n === +autoNext);
+    $('.tips').innerHTML = tips(mode, keys, autoNext);
+  };
 
   function drawStage() {
     const L = cur().lesson;
@@ -99,6 +115,7 @@ export async function renderStudy(view, id, given) {
     for (const b of $('#hintSeg').children) b.classList.toggle('on', b.dataset.m === hintMode);
     drawHint();
     $('#ans').className = 'answer' + (ok ? ' ok' : '');
+    $('#mark').checked = !!settings.get().wrong[keyOf(q)];
     // 揭晓 / 答对后把中文和例句一起给出来：点图模式提示区只有外文，不给中文就等于没学到
     const extra = it.sent ? `<div class="sent">${esc(it.sent)}</div><div class="sentZh">${esc(it.sentZh)}</div>` : '';
     $('#ans').innerHTML = ok || revealed ? `${ok ? '✓ ' : ''}${esc(it.en)} <span class="ipa">${esc(it.ipa)}</span> ${esc(it.pos)} · ${esc(it.zh)}${extra}` : '';
@@ -138,14 +155,19 @@ export async function renderStudy(view, id, given) {
     do i = (i + d + n) % n; while (skipDone && done.has(i) && done.size < n);
     newQuestion();
   };
+  // 答完了往下走：跳过已答的，全答完就出结果；没答的题就是普通翻页
+  const next = () => !done.has(i) ? go(1) : done.size === n ? finish() : go(1, true);
   function correct() {
-    done.set(i, wrong === 0 && !revealed);
+    const first = wrong === 0 && !revealed;
+    done.set(i, first);
+    if (!first) setBook(keyOf(cur()), true);
     if (!tap) say(); // 点图模式刚播过，不重复
     show();
-    setTimeout(() => { if (root.isConnected) done.size === n ? finish() : go(1, true); }, 900); // 900ms 内切了模式或离开页面就作废
+    const at = i;
+    if (autoNext) setTimeout(() => { if (root.isConnected && i === at) next(); }, 900); // 900ms 内已手动翻页 / 切模式 / 离开就作废
   }
   function submit() {
-    if (done.has(i)) return go(1, true);
+    if (done.has(i)) return next();
     if (isRight(inp.value, cur().item, langOf(cur().lesson))) return correct();
     wrong++; inp.className = 'big'; void inp.offsetWidth; inp.className = 'big bad';
     drawHint(); inp.select();
@@ -158,7 +180,7 @@ export async function renderStudy(view, id, given) {
   // 点图：只看点的位置在不在目标框里，不管碰到的是哪个框——床上的枕头、毯子不再挡住「床」
   const inside = ([y1, x1, y2, x2], x, y) => y >= y1 && y <= y2 && x >= x1 && x <= x2;
   function tapAt(e) {
-    if (done.has(i)) return;
+    if (done.has(i)) return autoNext ? undefined : next(); // 停住模式：答完再点图任何地方 = 下一题（手机上比找 › 顺手）
     const r = $('#stage').getBoundingClientRect(), x = (e.clientX - r.left) / r.width * 1000, y = (e.clientY - r.top) / r.height * 1000;
     if (inside(cur().item.box, x, y)) return correct();
     wrong++; drawHint();
@@ -171,11 +193,8 @@ export async function renderStudy(view, id, given) {
   }
   function finish() {
     const first = [...done.values()].filter(Boolean).length;
-    // 没一次答对的进错题本；答对的不自动移出（错完马上再练一遍答对就没了，来不及导 Anki），由下面的勾选框决定
-    const book = { ...settings.get().wrong }, missed = items.filter((q, k) => !done.get(k));
-    const keyOf = q => q.lesson.id + '|' + q.item.en;
-    for (const q of missed) book[keyOf(q)] ||= Date.now();
-    settings.set({ ...settings.get(), wrong: book });
+    // 没一次答对的在答题那一刻已进错题本；答对的不自动移出（错完马上再练一遍答对就没了，来不及导 Anki），由下面的勾选框决定
+    const book = settings.get().wrong, missed = items.filter((q, k) => !done.get(k));
     // 整课练完才有课可归档（错题本混练没有单一课）；整课从头全对才突出，只练一部分全对不算
     const lesson = id !== 'wrong' && items[0]?.lesson;
     const archBtn = !lesson ? '' : lesson.archived ? '<button disabled>已归档</button>' : `<button id="arch" class="${!given && first === n ? 'primary' : ''}">归档这一课</button>`;
@@ -185,9 +204,7 @@ export async function renderStudy(view, id, given) {
     // 勾 = 在错题本；同一个词两个框共用一个键，一起勾一起取消
     view.querySelector('ul').onchange = e => {
       const k = e.target.dataset.key; if (!k) return;
-      const b = { ...settings.get().wrong };
-      if (e.target.checked) b[k] ||= Date.now(); else delete b[k];
-      settings.set({ ...settings.get(), wrong: b });
+      setBook(k, e.target.checked);
       for (const c of view.querySelectorAll('input[data-key]')) if (c.dataset.key === k) c.checked = e.target.checked;
     };
     const arch = view.querySelector('#arch');
@@ -198,16 +215,19 @@ export async function renderStudy(view, id, given) {
   }
   if (mode === 'type') $('#submit').onclick = submit;
   if (pick) $('#choices').onclick = e => { const k = e.target.dataset.k; if (k) choose(choices[k]); };
-  if (tap) $('#stage').onclick = tapAt;
+  $('#stage').onclick = tap ? tapAt : () => { if (done.has(i) && !autoNext) next(); };
   $('#prev').onclick = () => go(-1);
-  $('#next').onclick = () => go(1);
+  $('#next').onclick = next;
   $('#say').onclick = say;
   $('#show').onclick = () => { revealed = true; show(); };
+  $('#mark').onchange = e => setBook(keyOf(cur()), e.target.checked);
   view.onkeydown = e => {
     if (e.isComposing) return; // 日语 / 韩语输入法选字时的回车不算提交
-    if (e.key === 'Enter') mode === 'type' ? submit() : go(1);
-    else if (e.ctrlKey && e.key === "'") $('#say').click();
-    else if (e.ctrlKey && e.key === ';') $('#show').click();
+    const c = comboOf(e); // 先配自定义组合键，再看普通 Enter（用户把 Ctrl+Enter 之类设成快捷键也能用）
+    if (c === keys.say) $('#say').click();
+    else if (c === keys.show) $('#show').click();
+    else if (c === keys.mark) $('#mark').click();
+    else if (e.key === 'Enter') mode === 'type' ? submit() : next();
     else if (pick && /^[1-4]$/.test(e.key) && choices[e.key - 1]) choose(choices[e.key - 1]);
     else return;
     e.preventDefault();

@@ -1,5 +1,5 @@
 // 入口：hash 路由、课程列表、设置页、导入导出、注册 PWA
-import { db, esc, dots, settings, toast, LANGS, langOf, folderOf, setArchived, wrongEntries } from './lib.js';
+import { db, esc, dots, settings, toast, LANGS, langOf, folderOf, setArchived, wrongEntries, KEYS, KEY_NAMES, keysOf, comboOf, keyLabel } from './lib.js';
 import { listModels } from './ai.js';
 import { speak } from './tts.js';
 import { renderEditor } from './editor.js';
@@ -168,10 +168,10 @@ async function switchPacks(lang) {
 
 function renderSettings() {
   const s = settings.get();
-  const preset = PRESETS[s.ankiPreset] ? s.ankiPreset : 'pic';
+  const preset = PRESETS[s.ankiPreset] ? s.ankiPreset : 'pic', keys = keysOf();
   view.innerHTML = `
     <div style="max-width:560px;margin:0 auto">
-      <div class="bar"><span class="seg" id="setTabs"><button data-stab="api" class="on">接口</button><button data-stab="anki">Anki</button></span></div>
+      <div class="bar"><span class="seg" id="setTabs"><button data-stab="api" class="on">接口</button><button data-stab="anki">Anki</button><button data-stab="keys">快捷键</button></span></div>
       <div id="pane-api">
       <div class="panel">
       <h3 style="margin-top:0">AI 接口（OpenAI 兼容）</h3>
@@ -212,6 +212,14 @@ function renderSettings() {
       <p class="muted" id="ankiHint">${PRESETS[preset].hint}</p>
       </div>
       </div>
+      <div id="pane-keys" hidden>
+      <div class="panel">
+      <h3 style="margin-top:0">学习页快捷键</h3>
+      <p class="muted">点进框里，按下你想用的组合键。要带 Ctrl / ⌘ / Alt（打单词时纯字母会打进输入框）。Enter 提交 / 下一题、1–4 选项不能改。</p>
+      ${Object.entries(KEY_NAMES).map(([k, name]) => `<label class="field">${name} <input data-key="${k}" readonly value="${esc(keyLabel(keys[k]))}" placeholder="按下组合键"></label>`).join('')}
+      <div class="bar"><button id="keysReset">恢复默认</button></div>
+      </div>
+      </div>
       <p class="muted">Key 只存在这台设备的浏览器里，不会上传到别处。</p>
       <div class="bar"><button id="save" class="primary">保存</button></div>
     </div>`;
@@ -222,7 +230,18 @@ function renderSettings() {
     ankiDeck: $('#ankiNew').value.trim() || $('#ankiDeck').value || s.ankiDeck || '',
     ankiPreset: $('#ankiPreset').value || 'pic',
     genParallel: (n => Number.isInteger(n) && n >= 1 && n <= 8 ? n : 3)(+$('#genParallel').value),
+    keys,
   });
+  // 录快捷键：只认带修饰键的组合（或 F 键），光按修饰键不算；和另一个撞了就提醒
+  for (const inp of view.querySelectorAll('input[data-key]')) inp.onkeydown = e => {
+    e.preventDefault();
+    if (/^(Control|Meta|Alt|Shift)/.test(e.code)) return;
+    if (!(e.ctrlKey || e.metaKey || e.altKey) && !/^F\d+$/.test(e.code)) return toast('要带 Ctrl / ⌘ / Alt');
+    const c = comboOf(e), k = inp.dataset.key, dup = Object.keys(keys).find(o => o !== k && keys[o] === c);
+    if (dup) return toast(`这个组合已经给了「${KEY_NAMES[dup]}」`);
+    keys[k] = c; inp.value = keyLabel(c);
+  };
+  $('#keysReset').onclick = () => { Object.assign(keys, KEYS); for (const inp of view.querySelectorAll('input[data-key]')) inp.value = keyLabel(keys[inp.dataset.key]); };
   const connectAnki = async () => {
     $('#ankiStatus').textContent = '正在连接…';
     $('#ankiHelp').hidden = true;
@@ -241,8 +260,7 @@ function renderSettings() {
   $('#setTabs').onclick = e => {
     const t = e.target.dataset.stab;
     if (!t) return;
-    $('#pane-api').hidden = t !== 'api';
-    $('#pane-anki').hidden = t !== 'anki';
+    for (const p of view.querySelectorAll('[id^="pane-"]')) p.hidden = p.id !== 'pane-' + t;
     $('#setTabs').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.stab === t));
     if (t === 'anki') connectAnki();
   };
