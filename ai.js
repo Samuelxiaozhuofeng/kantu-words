@@ -38,13 +38,19 @@ const parseArr = c => {
   try { return JSON.parse(c.slice(c.indexOf('['), c.lastIndexOf(']') + 1)); }
   catch { throw new Error('模型没按格式返回：' + c.slice(0, 200)); }
 };
+// 搭配：非数组当 []；en 必须是带 [...] 的字符串，最多 4 条；zh 缺省空串
+const colArr = c => (Array.isArray(c) ? c : [])
+  .filter(x => x && typeof x.en === 'string' && /\[[^\]]+\]/.test(x.en))
+  .slice(0, 4)
+  .map(x => ({ en: x.en, zh: x.zh || '' }));
 
 // 识图 prompt 按课程语种生成；数据字段仍叫 en（改字段名会连累内置课和备份），存的是该语种的词
 export const prompt = (lang, withSent) => {
   const L = LANGS[lang] || LANGS.en;
+  const jaCol = lang === 'ja' ? ' For Japanese put 汉字|假名 inside the brackets, e.g. "[沸かす|わかす]やかんを".' : '';
   return `Identify every distinct object in this image that a ${L.ai} learner should be able to name (clothes, shoes, furniture, food, tools, animals, etc). Skip tiny or ambiguous details.
 Return ONLY a JSON array, no prose, no markdown. Each element:
-{"en":"<${L.ai} word>","zh":"裙子","ipa":"<${L.ipa}>","pos":"n.","alts":["<alternative>"],"box":[ymin,xmin,ymax,xmax]${withSent ? `,"sent":"<short ${L.ai} sentence>","sentZh":"这句话的中文"` : ''}}
+{"en":"<${L.ai} word>","zh":"裙子","ipa":"<${L.ipa}>","pos":"n.","alts":["<alternative>"],"box":[ymin,xmin,ymax,xmax]${withSent ? `,"sent":"<short ${L.ai} sentence>","sentZh":"这句话的中文","col":[{"en":"[verb] the word","zh":"搭配中文"}]` : ''}}
 - en: the most common everyday ${L.ai} word for the object, written as it is normally written, WITHOUT any article (plural if the image shows a pair/multiple)
 - zh: simplified Chinese
 - ipa: ${L.ipa}
@@ -52,6 +58,7 @@ Return ONLY a JSON array, no prose, no markdown. Each element:
 - box: bounding box normalized to 0-1000 of the image, [ymin,xmin,ymax,xmax], tight around the object
 ${withSent ? `- sent: one short ${L.ai} sentence (≤ 12 words) describing the actual situation of this object in the picture; the word appears in the sentence exactly once
 - sentZh: simplified Chinese of that sentence
+- col: 2–4 high-frequency collocations of this word (verb + it, adjective + it). Each {"en":"collocation with the practised word in [square brackets]","zh":"整条搭配的中文"}.${jaCol}
 ` : ''}One element per object, no duplicates.`;
 };
 
@@ -64,22 +71,23 @@ export async function detect(blob, lang = 'en', withSent) {
   });
   return parseArr(j.choices[0].message.content)
     .filter(i => i.en && Array.isArray(i.box) && i.box.length === 4)
-    .map(i => ({ en: String(i.en), zh: i.zh || '', ipa: i.ipa || '', pos: i.pos || '', alts: (i.alts || []).map(String), box: i.box.map(n => Math.max(0, Math.min(1000, +n || 0))), sent: i.sent || '', sentZh: i.sentZh || '' }));
+    .map(i => ({ en: String(i.en), zh: i.zh || '', ipa: i.ipa || '', pos: i.pos || '', alts: (i.alts || []).map(String), box: i.box.map(n => Math.max(0, Math.min(1000, +n || 0))), sent: i.sent || '', sentZh: i.sentZh || '', col: withSent ? colArr(i.col) : [] }));
 }
 
-// 只发文字：给已有词补例句，每条必须回显原词 en，调用方按 en 匹配
+// 只发文字：给已有词补例句和搭配，每条必须回显原词 en，调用方按 en 匹配
 export async function fillSents(items, lang = 'en') {
   const s = cfg();
   if (!s.visionModel) throw new Error('请先在「设置」里选识别模型');
   const L = LANGS[lang] || LANGS.en;
+  const jaCol = lang === 'ja' ? ' For Japanese put 汉字|假名 inside the brackets.' : '';
   const j = await call('/chat/completions', {
     model: s.visionModel, max_tokens: 8000,
-    messages: [{ role: 'user', content: `For each word write one short ${L.ai} sentence (≤ 12 words) in which the word appears exactly once, plus simplified Chinese.
+    messages: [{ role: 'user', content: `For each word write one short ${L.ai} sentence (≤ 12 words) in which the word appears exactly once, plus simplified Chinese, plus 2–4 high-frequency collocations (verb + it, adjective + it). Put the practised word in [square brackets] in each collocation; zh is Chinese of the whole collocation.${jaCol}
 Return ONLY a JSON array, no prose, no markdown. Each element:
-{"en":"<original word exactly as given>","sent":"…","sentZh":"…"}
+{"en":"<original word exactly as given>","sent":"…","sentZh":"…","col":[{"en":"[verb] the word","zh":"搭配中文"}]}
 Words: ${JSON.stringify(items.map(i => ({ en: i.en, zh: i.zh || '' })))}` }],
   });
-  return parseArr(j.choices[0].message.content);
+  return parseArr(j.choices[0].message.content).filter(r => r && r.en).map(r => ({ en: String(r.en), sent: r.sent || '', sentZh: r.sentZh || '', col: colArr(r.col) }));
 }
 
 // 「AI 出课」列子话题：给面包屑路径，回 6–10 个更细一层、能画成认物图的中文名

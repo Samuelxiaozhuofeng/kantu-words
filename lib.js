@@ -67,3 +67,26 @@ export function toast(msg, ms = 2500) {
   const d = Object.assign(document.createElement('div'), { className: 'toast', textContent: msg });
   document.body.append(d); setTimeout(() => d.remove(), ms);
 }
+// 词卡裁图：把整图按框裁出来——高固定 80px，宽跟框的比例走（最窄 48、最宽 160，超出就居中裁）。错题本词卡和词视图共用
+export function fitCrops(root) {
+  for (const img of root.querySelectorAll('.crop img')) {
+    img.onload = () => {
+      const [y1, x1, y2, x2] = img.dataset.box.split(',').map(Number), W = img.naturalWidth, H = img.naturalHeight;
+      const s = 80 / ((y2 - y1) / 1000 * H), bw = (x2 - x1) / 1000 * W * s, cw = Math.min(160, Math.max(48, bw));
+      img.parentElement.style.width = cw + 'px';
+      img.style.cssText = `width:${W * s}px;height:${H * s}px;left:${(cw - bw) / 2 - x1 / 1000 * W * s}px;top:${-y1 / 1000 * H * s}px`;
+    };
+    if (img.complete) img.onload();
+  }
+}
+// 搭配：方括号标要练的词，| 分开多种写法。坏数据返回空对象，学习页没有 try
+export function colOf(str) {
+  if (typeof str !== 'string') return { text: '', blank: '', answers: [] };
+  const m = str.match(/\[([^\]]*)\]/);
+  const answers = (m ? m[1].split('|') : [str]).map(s => s.trim()).filter(Boolean);
+  return {
+    text: str.replace(/\[([^\]]*)\]/g, (_, inner) => inner.split('|')[0].trim()),
+    blank: str.replace(/\[[^\]]*\]/g, '___'),
+    answers,
+  };
+}

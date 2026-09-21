@@ -34,9 +34,10 @@ button.primary:hover,.btn.primary:hover{background:#2250c2}
 button.danger{color:var(--bad)}
 button.danger:hover{border-color:var(--bad)}
 input,select,textarea{background:#fff;color:var(--ink);border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;font:inherit;width:100%;outline:none}
-input:focus,select:focus{border-color:var(--mark);box-shadow:0 0 0 3px var(--mark-soft)}
+input:focus,select:focus,textarea:focus{border-color:var(--mark);box-shadow:0 0 0 3px var(--mark-soft)}
 label.field{display:block;margin:10px 0;color:var(--dim);font-size:13px;font-weight:700}
-label.field input,label.field select{margin-top:4px;font-weight:500}
+label.field input,label.field select,label.field textarea{margin-top:4px;font-weight:500}
+label.field textarea{min-height:80px;resize:vertical}
 .chk{display:inline-flex;align-items:center;gap:6px;font-size:14px;font-weight:700;color:var(--dim);cursor:pointer;user-select:none}
 .bar .chk input{width:auto;flex:none;min-width:0}
 .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
@@ -127,6 +128,9 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;paddi
 .wcard .ipa{font-family:ui-monospace,Menlo,monospace;font-size:14px;color:var(--dim)}
 .wcard .sent{font-size:14px;margin-top:4px}
 .wcard .sentZh{font-size:13px;color:var(--dim)}
+.wcard .col{font-size:13px;color:var(--dim);margin-top:2px}
+.wcard .info b a{color:inherit;text-decoration:none}
+.wcard .info b a:hover{color:var(--mark)}
 .wcard small{display:block;margin-top:4px;font-size:12px}
 .wcard .ops{display:flex;flex-direction:column;gap:6px;flex:none}
 .wcard .ops button{padding:4px 10px;font-size:13px}
@@ -145,7 +149,8 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;paddi
 .study .top b{font-size:17px}
 .segs{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .seg{display:inline-flex;border:1.5px solid var(--line);border-radius:999px;padding:3px;background:#fff}
-.seg button{border:none;padding:5px 12px;font-size:13px;color:var(--dim);background:none}
+.seg{flex-wrap:wrap;justify-content:center} /* 手机上六种练法一行放不下：整个按钮换行，别把「打单词」拆成两行 */
+.seg button{border:none;padding:5px 12px;font-size:13px;color:var(--dim);background:none;white-space:nowrap}
 .seg button.on{background:var(--ink);color:#fff}
 .progress{height:6px;background:var(--line);border-radius:3px;margin-bottom:16px;overflow:hidden}
 .progress i{display:block;height:100%;background:var(--ok);border-radius:3px;transition:width .3s}
@@ -162,7 +167,16 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;paddi
 .answer .ipa{font-family:ui-monospace,Menlo,monospace;font-size:15px}
 .answer .sent{display:block;font-size:14px;font-weight:500;margin-top:6px}
 .answer .sentZh{display:block;font-size:13px;font-weight:400}
+.answer .col{display:block;font-size:14px;font-weight:500;margin-top:2px}
+.answer .more{display:block;margin-top:8px;font-size:14px;font-weight:500}
+.answer .more a{color:var(--mark)}
 .answer.ok{color:var(--ok);font-weight:700}
+.cols{margin:8px 0 0;padding-left:1.2em;font-size:15px}
+.wordpage{max-width:640px;margin:0 auto}
+.wordpage .wordhead h2{display:flex;align-items:center;gap:8px;margin:0 0 6px}
+.wordpage .ipa{font-family:ui-monospace,Menlo,monospace;font-size:15px;color:var(--dim)}
+.wordpage .wcard{margin-top:8px}
+.wordpage .wcard .btn{padding:4px 10px;font-size:13px;margin-top:4px}
 .deck .bar{margin:0;justify-content:center;gap:6px}
 .deck .tips{margin:0}
 .result{text-align:center;max-width:520px;margin:20px auto}

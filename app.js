@@ -1,9 +1,10 @@
 // 入口：hash 路由、课程列表、设置页、导入导出、注册 PWA
-import { db, esc, dots, settings, toast, LANGS, langOf, folderOf, setArchived, wrongEntries, KEYS, KEY_NAMES, keysOf, comboOf, keyLabel } from './lib.js';
+import { db, esc, dots, settings, toast, LANGS, langOf, folderOf, setArchived, wrongEntries, KEYS, KEY_NAMES, keysOf, comboOf, keyLabel, colOf, fitCrops } from './lib.js';
 import { listModels } from './ai.js';
 import { speak } from './tts.js';
 import { renderEditor } from './editor.js';
 import { renderStudy } from './study.js';
+import { renderWord } from './word.js';
 import { renderGen, queue, retryFailed, clearQueue } from './gen.js';
 import { PRESETS, pingAnki, listDecks, exportWrong } from './anki.js';
 
@@ -35,8 +36,8 @@ async function renderList() {
     <div class="bar">${wrongs.length ? `<a class="btn primary" href="#/study/wrong">练习错题本</a><button id="exportAnki">导出到 Anki</button><label class="chk"><input type="checkbox" id="ankiClear"${settings.get().ankiClear ? ' checked' : ''}> 导出后清空错题本</label>` : ''}<button id="clearWrong">清空错题本</button></div>
     ${wrongs.length ? `<div class="wcards">${wrongs.map(q => { const it = q.item; return `<div class="wcard">
       <div class="crop"><img src="${imgUrl(q.lesson)}" data-box="${it.box.join(',')}"></div>
-      <div class="info"><b>${esc(it.en)}</b> <span class="ipa">${esc(it.ipa)}</span> <span class="muted">${esc(it.pos)}</span><div>${esc(it.zh)}</div>
-        ${it.sent ? `<div class="sent">${esc(it.sent)}</div><div class="sentZh">${esc(it.sentZh)}</div>` : ''}<small class="muted">${esc(q.lesson.title)}</small></div>
+      <div class="info"><b><a href="#/word/${langOf(q.lesson)}/${encodeURIComponent(it.en)}">${esc(it.en)}</a></b> <span class="ipa">${esc(it.ipa)}</span> <span class="muted">${esc(it.pos)}</span><div>${esc(it.zh)}</div>
+        ${it.sent ? `<div class="sent">${esc(it.sent)}</div><div class="sentZh">${esc(it.sentZh)}</div>` : ''}${(it.col || []).filter(c => c && c.en).map(c => `<div class="col">${esc(colOf(c.en).text)}${c.zh ? ' — ' + esc(c.zh) : ''}</div>`).join('')}<small class="muted">${esc(q.lesson.title)}</small></div>
       <div class="ops"><button data-say="${esc(it.en)}" data-lang="${langOf(q.lesson)}">🔊</button><button data-unwrong="${esc(q.key)}">移出</button></div></div>`; }).join('')}</div>`
     : '<div class="empty"><b>错题本是空的</b>练完没一次答对的词会记在这里；答对了不会自动拿掉，在结果页取消勾选、或在这里点「移出」才拿掉。</div>'}`;
   view.innerHTML = `
@@ -51,16 +52,7 @@ async function renderList() {
     ${tab === 'wrong' ? '' : `<div class="cards">${shown.map(l => `<div class="card"><a class="pic" href="#/study/${l.id}"><img src="${URL.createObjectURL(l.image)}"><span class="n">${l.items.length ? l.items.length + ' 词' : '待整理'}</span>${langOf(l) === 'en' ? '' : `<span class="n lang">${LANGS[langOf(l)].name}</span>`}</a>
       <div class="body"><b>${esc(l.title)}</b>
       <div class="bar"><a class="btn primary" href="#/study/${l.id}">开始学</a><a class="btn" href="#/edit/${l.id}">编辑</a>${l.archived ? `<button data-unarch="${l.id}">放回</button>` : `<button data-arch="${l.id}">归档</button>`}<span style="flex:1"></span><button class="danger" data-del="${l.id}">删</button></div></div></div>`).join('')}</div>`}`;
-  // 错题本词卡：把整图按框裁出来——高固定 80px，宽跟框的比例走（最窄 48、最宽 160，超出就居中裁）
-  for (const img of view.querySelectorAll('.crop img')) {
-    img.onload = () => {
-      const [y1, x1, y2, x2] = img.dataset.box.split(',').map(Number), W = img.naturalWidth, H = img.naturalHeight;
-      const s = 80 / ((y2 - y1) / 1000 * H), bw = (x2 - x1) / 1000 * W * s, cw = Math.min(160, Math.max(48, bw));
-      img.parentElement.style.width = cw + 'px';
-      img.style.cssText = `width:${W * s}px;height:${H * s}px;left:${(cw - bw) / 2 - x1 / 1000 * W * s}px;top:${-y1 / 1000 * H * s}px`;
-    };
-    if (img.complete) img.onload();
-  }
+  fitCrops(view);
   view.querySelector('#tabs').onclick = e => { const t = e.target.dataset.tab; if (t) { settings.set({ ...settings.get(), homeTab: t }); renderList(); } };
   const fl = view.querySelector('#folders');
   if (fl) fl.onclick = e => { const f = e.target.dataset.folder; if (f !== undefined) { curFolder = f; renderList(); } };
@@ -110,7 +102,11 @@ async function renderList() {
       const ok = arr.filter(l => l && l.id && typeof l.image === 'string' && Array.isArray(l.items));
       for (const l of ok) await db.put({
         title: '未命名', created: Date.now(), ...l, image: await (await fetch(l.image)).blob(),
-        items: l.items.filter(i => i && i.en && Array.isArray(i.box) && i.box.length === 4).map(i => ({ zh: '', ipa: '', pos: '', alts: [], sent: '', sentZh: '', ...i })),
+        items: l.items.filter(i => i && i.en && Array.isArray(i.box) && i.box.length === 4).map(i => {
+          const it = { zh: '', ipa: '', pos: '', alts: [], sent: '', sentZh: '', col: [], ...i };
+          it.col = Array.isArray(it.col) ? it.col.filter(c => c && typeof c.en === 'string') : [];
+          return it;
+        }),
       });
       toast(`导入 ${ok.length} 课` + (ok.length < arr.length ? `，跳过 ${arr.length - ok.length} 条坏数据` : '')); renderList();
     } catch (err) { alert('导入失败：' + err.message); }
@@ -139,8 +135,8 @@ async function addPacks() {
   settings.set({ ...settings.get(), packsAdded: true });
   return k;
 }
-// 内置课词表升级（目前只加了例句）：只给本机 pack 课里「词没被用户改过且还没有例句」的词填上，别的一律不动；跑过一次记版本号
-const PACKS_VER = 2;
+// 内置课词表升级：只给本机 pack 课里「词没被用户改过且还没有的字段」填上，别的一律不动；跑过一次记版本号
+const PACKS_VER = 3;
 async function fillPackSents() {
   if (settings.get().packsVer === PACKS_VER) return;
   for (const p of await fetchPacks()) {
@@ -151,6 +147,7 @@ async function fillPackSents() {
     l.items.forEach((it, k) => {
       const f = fresh[k];
       if (!it.sent && f?.sent && f.en === it.en) { it.sent = f.sent; it.sentZh = f.sentZh || ''; changed = true; }
+      if (!it.col?.length && f?.col?.length && f.en === it.en) { it.col = f.col; changed = true; }
     });
     if (changed) await db.put(l);
   }
@@ -292,12 +289,14 @@ function route() {
   if (view.dirty && !confirm('这一课还没保存，改动会丢。确定离开？')) { location.hash = cur; return; }
   view.dirty = false;
   cur = location.hash;
-  const [, page, id] = cur.slice(1).split('/');
+  const parts = cur.slice(1).split('/');
+  const page = parts[1], id = parts[2];
   view.onclick = view.onkeydown = null;
   if (page === 'edit') renderEditor(view, id);
   else if (page === 'study') renderStudy(view, id);
   else if (page === 'settings') renderSettings();
   else if (page === 'gen') renderGen(view);
+  else if (page === 'word') renderWord(view, id, decodeURIComponent(parts.slice(3).join('/')));
   else {
     renderList();
     addPacks().then(k => { if (k) { toast(`已放入 ${k} 课内置课程，不填 Key 也能玩`); if (cur === location.hash) renderList(); } }).then(fillPackSents).catch(e => console.warn('内置课程没拿到，下次再试', e));

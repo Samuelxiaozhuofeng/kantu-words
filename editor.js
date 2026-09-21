@@ -21,8 +21,8 @@ export async function renderEditor(view, id) {
       <label class="btn">上传图片<input type="file" id="file" accept="image/*" hidden></label>
       <button id="gen">AI 生图</button>
       <button id="detect">AI 识别</button>
-      <label class="chk"><input type="checkbox" id="withSent"${settings.get().withSent ? ' checked' : ''}> 生成例句</label>
-      <button id="fill">补例句</button>
+      <label class="chk"><input type="checkbox" id="withSent"${settings.get().withSent ? ' checked' : ''}> 生成例句和搭配</label>
+      <button id="fill">补例句和搭配</button>
       <button id="add">＋ 手动加框</button>
       <button id="save" class="primary">保存</button>
     </div>
@@ -56,12 +56,23 @@ export async function renderEditor(view, id) {
       <label class="field">也算对（逗号分隔）<input id="f-alts" value="${esc(it.alts.join(', '))}"></label>
       <label class="field">例句 <input id="f-sent" value="${esc(it.sent || '')}"></label>
       <label class="field">例句中文 <input id="f-sentZh" value="${esc(it.sentZh || '')}"></label>
+      <label class="field">搭配 <textarea id="f-col" rows="4" placeholder="[boil] the kettle = 烧水">${esc((it.col || []).filter(c => c && c.en).map(c => c.en + (c.zh ? ' = ' + c.zh : '')).join('\n'))}</textarea></label>
       <div class="bar"><button id="say">🔊 试听</button><button id="saySent"${it.sent ? '' : ' hidden'}>🔊 听例句</button><button id="del" class="danger">删除这个框</button></div></div>` : ''}
       <div class="words">${lesson.items.map((x, i) => `<div class="${i === sel ? 'sel' : ''}" data-i="${i}"><b>${esc(x.en)}</b><span class="muted">${esc(x.zh)}</span></div>`).join('')}</div>`;
     $('.words .sel')?.scrollIntoView({ block: 'nearest' });
     if (!it) return;
     for (const k of ['en', 'zh', 'ipa', 'pos', 'sent', 'sentZh']) $('#f-' + k).oninput = e => { it[k] = e.target.value; touch(); if (k === 'en') drawStage(); if (k === 'sent') $('#saySent').hidden = !it.sent; };
     $('#f-alts').oninput = e => { it.alts = e.target.value.split(/[,，]/).map(s => s.trim()).filter(Boolean); touch(); };
+    $('#f-col').oninput = e => {
+      it.col = e.target.value.split('\n').map(line => {
+        const s = line.trim(); if (!s) return null;
+        const k = s.search(/[=＝]/);
+        const en = (k < 0 ? s : s.slice(0, k)).trim();
+        const zh = k < 0 ? '' : s.slice(k + 1).trim();
+        return en ? { en, zh } : null;
+      }).filter(Boolean);
+      touch();
+    };
     $('#say').onclick = () => speak(it.en, lesson.lang);
     $('#saySent').onclick = () => speak(it.sent, lesson.lang);
     $('#del').onclick = removeSel;
@@ -99,7 +110,7 @@ export async function renderEditor(view, id) {
   stage.onpointerup = () => drag = null;
   $('#panel').onclick = e => { const d = e.target.closest('.words div'); if (d) select(+d.dataset.i); };
   view.onkeydown = e => {
-    if (sel < 0 || e.target.matches('input')) return;
+    if (sel < 0 || e.target.matches('input, textarea')) return;
     const step = e.shiftKey ? 20 : 4;
     const d = { ArrowUp: [0, -step], ArrowDown: [0, step], ArrowLeft: [-step, 0], ArrowRight: [step, 0] }[e.key];
     if (d) moveBox(sel, ...d);
@@ -118,16 +129,20 @@ export async function renderEditor(view, id) {
   $('#withSent').onchange = e => settings.set({ ...settings.get(), withSent: e.target.checked });
   $('#fill').onclick = async () => {
     if (!lesson.items.length) return toast('先识别或加几个词');
-    await busy($('#fill'), '补例句中', async () => {
+    await busy($('#fill'), '补例句和搭配中', async () => {
       const arr = await fillSents(lesson.items, lesson.lang);
       const norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
       const by = new Map();
-      for (const r of arr || []) if (norm(r?.en) && r.sent) by.set(norm(r.en), r);
+      for (const r of arr || []) if (norm(r?.en) && (r.sent || r.col?.length)) by.set(norm(r.en), r);
       let n = 0, miss = 0;
-      // 没配上的词保留原来的句子（模型漏回一条不该把已有例句抹掉）
+      // 没配上的词保留原来的例句和搭配（模型漏回一条不该把已有的抹掉）
       for (const it of lesson.items) {
         const r = by.get(norm(it.en));
-        if (r) { it.sent = String(r.sent); it.sentZh = String(r.sentZh || ''); n++; } else miss++;
+        if (r) {
+          if (r.sent) { it.sent = String(r.sent); it.sentZh = String(r.sentZh || ''); }
+          if (r.col?.length) it.col = r.col;
+          n++;
+        } else miss++;
       }
       touch(); drawPanel();
       toast(`补了 ${n} 句` + (miss ? `，${miss} 个词没配上` : ''));
