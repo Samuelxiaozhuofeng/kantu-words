@@ -38,7 +38,7 @@ export async function renderStudy(view, id) {
     <div class="progress"><i id="bar"></i></div>
     <div class="two">
       <div class="stage" id="stage"><img src="${imgUrl}">${mode === 'tap'
-        ? items.map((it, k) => `<div class="box" data-i="${k}" style="${boxStyle(it.box)}"></div>`).join('')
+        ? items.map((it, k) => `<div class="box" data-i="${k}" style="${boxStyle(it.box)}"><span class="tag">${esc(it.en)}</span></div>`).join('')
         : '<div class="box sel" id="box"></div>'}</div>
       <div class="panel deck">
         <div class="hint" id="hint"></div>
@@ -117,12 +117,19 @@ export async function renderStudy(view, id) {
     if (c === items[i]) return correct();
     wrong++; bad.add(c); show();
   }
-  function tapBox(b) {
-    const k = +b.dataset.i;
-    if (done.has(i) || done.has(k)) return; // 已答完的绿框再点不算错
-    if (k === i) return correct();
+  // 点图：只看点的位置在不在目标框里，不管碰到的是哪个框——床上的枕头、毯子不再挡住「床」
+  const inside = ([y1, x1, y2, x2], x, y) => y >= y1 && y <= y2 && x >= x1 && x <= x2;
+  function tapAt(e) {
+    if (done.has(i)) return;
+    const r = $('#stage').getBoundingClientRect(), x = (e.clientX - r.left) / r.width * 1000, y = (e.clientY - r.top) / r.height * 1000;
+    if (inside(items[i].box, x, y)) return correct();
     wrong++; drawHint();
-    b.classList.add('bad'); setTimeout(() => b.classList.remove('bad'), 400);
+    // 点错了：把碰到的那个物品（最小的那个框）亮红一下并带名字，顺手认一个
+    const hit = items.map((it, k) => [it, k]).filter(([it]) => inside(it.box, x, y))
+      .sort((a, b) => (a[0].box[2] - a[0].box[0]) * (a[0].box[3] - a[0].box[1]) - (b[0].box[2] - b[0].box[0]) * (b[0].box[3] - b[0].box[1]))[0];
+    if (!hit) return;
+    const b = $(`.box[data-i="${hit[1]}"]`);
+    b.classList.add('bad'); setTimeout(() => b.classList.remove('bad'), 1000);
   }
   function finish() {
     const first = [...done.values()].filter(Boolean).length;
@@ -133,7 +140,7 @@ export async function renderStudy(view, id) {
   }
   if (mode === 'type') $('#submit').onclick = submit;
   if (pick) $('#choices').onclick = e => { const k = e.target.dataset.k; if (k) choose(choices[k]); };
-  if (mode === 'tap') $('#stage').onclick = e => { const b = e.target.closest('.box'); if (b) tapBox(b); };
+  if (mode === 'tap') $('#stage').onclick = tapAt;
   $('#prev').onclick = () => go(-1);
   $('#next').onclick = () => go(1);
   $('#say').onclick = () => speak(items[i].en);

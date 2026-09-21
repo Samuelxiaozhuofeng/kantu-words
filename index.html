@@ -71,12 +71,14 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;paddi
 .box.sel .tag{background:var(--sun);color:var(--ink)}
 .study .box{cursor:default;border-color:var(--sun)}
 .study .box.sel{transition:left .35s cubic-bezier(.2,.8,.2,1),top .35s cubic-bezier(.2,.8,.2,1),width .35s,height .35s}
-/* 听音点图：全部框可点，答对变绿、点错抖一下 */
-.study.tap .box{cursor:pointer;border-color:var(--mark)}
-.study.tap .box:hover{border-color:var(--sun)}
-.study.tap .box.sel{border-color:var(--sun)}
-.study.tap .box.ok{border-color:var(--ok)}
-.study.tap .box.bad{animation:shake .3s;border-color:var(--bad)}
+/* 听音点图：平时不画框，图是干净的；答对亮黄、答完留个绿勾、点错的物品红一下并带名字 */
+.study.tap .stage{cursor:pointer}
+.study.tap .box{pointer-events:none;border-color:transparent;box-shadow:none;transition:border-color .15s}
+.study.tap .box .tag{display:none}
+.study.tap .box.sel{border-color:var(--sun);box-shadow:0 0 0 9999px rgba(28,34,51,.55),0 0 0 1.5px #fff,inset 0 0 0 1.5px #fff}
+.study.tap .box.ok::after{content:'✓';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;background:var(--ok);color:#fff;font-size:14px;font-weight:900;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 4px rgba(0,0,0,.3)}
+.study.tap .box.bad{animation:shake .3s;border-color:var(--bad);box-shadow:0 0 0 1.5px #fff,inset 0 0 0 1.5px #fff}
+.study.tap .box.bad .tag{display:block;background:var(--bad);color:#fff;max-width:none}
 /* 四选一 */
 .choices{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%}
 .choices button{justify-content:center;font-size:18px;padding:12px 8px}
