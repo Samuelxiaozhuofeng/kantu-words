@@ -26,15 +26,19 @@ async function renderList() {
   const inFolder = l => !curFolder || (folderOf(l) || UNGROUPED) === curFolder;
   const shown = tab === 'packs' ? packs : tab === 'done' ? done : mine.filter(inFolder), packLang = settings.get().packLang || 'en';
   const wrongs = wrongEntries(lessons, settings.get().wrong);
+  const urls = new Map(), imgUrl = l => { if (!urls.has(l.id)) urls.set(l.id, URL.createObjectURL(l.image)); return urls.get(l.id); };
   const by = st => queue.filter(j => j.state === st), names = st => by(st).map(j => esc(j.topic)).join('、');
   const genBar = !queue.length ? '' : `<div class="bar genprog"><span>AI 出课：完成 ${by('done').length} / ${queue.length}${by('run').length ? ` · 生成中 ${by('run').length}：${dots(names('run'))}` : ''}${by('wait').length ? ` · 排队 ${by('wait').length}` : ''}${by('fail').length ? ` · 失败 ${by('fail').length}` : ''}</span>
     ${by('fail').map(j => `<span class="muted">${esc(j.topic)}：${esc(j.error.slice(0, 60))}</span>`).join('')}
     ${by('fail').length ? '<button id="genRetry">重试失败的</button>' : ''}${by('run').length + by('wait').length ? '' : '<button id="genClear">清除记录</button>'}</div>`;
   const wrongPanel = `
     <div class="bar">${wrongs.length ? `<a class="btn primary" href="#/study/wrong">练习错题本</a><button id="exportAnki">导出到 Anki</button><label class="chk"><input type="checkbox" id="ankiClear"${settings.get().ankiClear ? ' checked' : ''}> 导出后清空错题本</label>` : ''}<button id="clearWrong">清空错题本</button></div>
-    ${wrongs.length ? `<div class="words wrongs">${wrongs.map(q =>
-      `<div><b>${esc(q.item.en)}</b> ${esc(q.item.zh)} <span class="muted">${esc(q.lesson.title)}</span><button data-unwrong="${esc(q.key)}">移出</button></div>`
-    ).join('')}</div>` : '<div class="empty"><b>错题本是空的</b>练完没一次答对的词会记在这里，下次一次答对就会拿掉。</div>'}`;
+    ${wrongs.length ? `<div class="wcards">${wrongs.map(q => { const it = q.item; return `<div class="wcard">
+      <div class="crop"><img src="${imgUrl(q.lesson)}" data-box="${it.box.join(',')}"></div>
+      <div class="info"><b>${esc(it.en)}</b> <span class="ipa">${esc(it.ipa)}</span> <span class="muted">${esc(it.pos)}</span><div>${esc(it.zh)}</div>
+        ${it.sent ? `<div class="sent">${esc(it.sent)}</div><div class="sentZh">${esc(it.sentZh)}</div>` : ''}<small class="muted">${esc(q.lesson.title)}</small></div>
+      <div class="ops"><button data-say="${esc(it.en)}" data-lang="${langOf(q.lesson)}">🔊</button><button data-unwrong="${esc(q.key)}">移出</button></div></div>`; }).join('')}</div>`
+    : '<div class="empty"><b>错题本是空的</b>练完没一次答对的词会记在这里；答对了不会自动拿掉，在结果页取消勾选、或在这里点「移出」才拿掉。</div>'}`;
   view.innerHTML = `
     <div class="bar"><a class="btn primary" href="#/edit">＋ 新建课程</a>
       <span class="seg" id="tabs"><button data-tab="mine" class="${tab === 'mine' ? 'on' : ''}">我的课程 ${mine.length}</button><button data-tab="packs" class="${tab === 'packs' ? 'on' : ''}">内置课程 ${packs.length}</button><button data-tab="done" class="${tab === 'done' ? 'on' : ''}">已学完 ${done.length}</button><button data-tab="wrong" class="${tab === 'wrong' ? 'on' : ''}">错题本 ${wrongs.length}</button></span>
@@ -47,6 +51,16 @@ async function renderList() {
     ${tab === 'wrong' ? '' : `<div class="cards">${shown.map(l => `<div class="card"><a class="pic" href="#/study/${l.id}"><img src="${URL.createObjectURL(l.image)}"><span class="n">${l.items.length ? l.items.length + ' 词' : '待整理'}</span>${langOf(l) === 'en' ? '' : `<span class="n lang">${LANGS[langOf(l)].name}</span>`}</a>
       <div class="body"><b>${esc(l.title)}</b>
       <div class="bar"><a class="btn primary" href="#/study/${l.id}">开始学</a><a class="btn" href="#/edit/${l.id}">编辑</a>${l.archived ? `<button data-unarch="${l.id}">放回</button>` : `<button data-arch="${l.id}">归档</button>`}<span style="flex:1"></span><button class="danger" data-del="${l.id}">删</button></div></div></div>`).join('')}</div>`}`;
+  // 错题本词卡：把整图按框裁出来——高固定 80px，宽跟框的比例走（最窄 48、最宽 160，超出就居中裁）
+  for (const img of view.querySelectorAll('.crop img')) {
+    img.onload = () => {
+      const [y1, x1, y2, x2] = img.dataset.box.split(',').map(Number), W = img.naturalWidth, H = img.naturalHeight;
+      const s = 80 / ((y2 - y1) / 1000 * H), bw = (x2 - x1) / 1000 * W * s, cw = Math.min(160, Math.max(48, bw));
+      img.parentElement.style.width = cw + 'px';
+      img.style.cssText = `width:${W * s}px;height:${H * s}px;left:${(cw - bw) / 2 - x1 / 1000 * W * s}px;top:${-y1 / 1000 * H * s}px`;
+    };
+    if (img.complete) img.onload();
+  }
   view.querySelector('#tabs').onclick = e => { const t = e.target.dataset.tab; if (t) { settings.set({ ...settings.get(), homeTab: t }); renderList(); } };
   const fl = view.querySelector('#folders');
   if (fl) fl.onclick = e => { const f = e.target.dataset.folder; if (f !== undefined) { curFolder = f; renderList(); } };
@@ -71,6 +85,7 @@ async function renderList() {
     if (e.target.id === 'clearWrong' && confirm('把记着的错词都拿掉？')) {
       settings.set({ ...settings.get(), wrong: {} }); renderList(); return;
     }
+    if (e.target.dataset.say) return speak(e.target.dataset.say, e.target.dataset.lang);
     const k = e.target.dataset.unwrong;
     if (k) {
       const book = { ...settings.get().wrong };

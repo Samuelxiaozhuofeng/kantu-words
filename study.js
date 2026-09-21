@@ -99,8 +99,9 @@ export async function renderStudy(view, id, given) {
     for (const b of $('#hintSeg').children) b.classList.toggle('on', b.dataset.m === hintMode);
     drawHint();
     $('#ans').className = 'answer' + (ok ? ' ok' : '');
-    const extra = mode === 'sent' && it.sent ? `<div class="sent">${esc(it.sent)}</div><div class="sentZh">${esc(it.sentZh)}</div>` : mode !== 'sent' && it.sent ? `<div class="sent">${esc(it.sent)}</div>` : '';
-    $('#ans').innerHTML = ok || revealed ? `${ok ? '✓ ' : ''}${esc(it.en)} <span class="ipa">${esc(it.ipa)}</span>${ok || mode === 'sent' ? '' : ' ' + esc(it.pos)}${extra}` : '';
+    // 揭晓 / 答对后把中文和例句一起给出来：点图模式提示区只有外文，不给中文就等于没学到
+    const extra = it.sent ? `<div class="sent">${esc(it.sent)}</div><div class="sentZh">${esc(it.sentZh)}</div>` : '';
+    $('#ans').innerHTML = ok || revealed ? `${ok ? '✓ ' : ''}${esc(it.en)} <span class="ipa">${esc(it.ipa)}</span> ${esc(it.pos)} · ${esc(it.zh)}${extra}` : '';
     if (tap) {
       const L = q.lesson;
       for (const b of $('#stage').querySelectorAll('.box')) {
@@ -170,20 +171,25 @@ export async function renderStudy(view, id, given) {
   }
   function finish() {
     const first = [...done.values()].filter(Boolean).length;
-    // 同一课两个框同一个词共用一个键：有一题没一次答对就算错，全对才移出（不看题目顺序）
+    // 没一次答对的进错题本；答对的不自动移出（错完马上再练一遍答对就没了，来不及导 Anki），由下面的勾选框决定
     const book = { ...settings.get().wrong }, missed = items.filter((q, k) => !done.get(k));
-    const keyOf = q => q.lesson.id + '|' + q.item.en, missedKeys = new Set(missed.map(keyOf));
-    for (const q of items) {
-      if (missedKeys.has(keyOf(q))) book[keyOf(q)] ||= Date.now();
-      else delete book[keyOf(q)];
-    }
+    const keyOf = q => q.lesson.id + '|' + q.item.en;
+    for (const q of missed) book[keyOf(q)] ||= Date.now();
     settings.set({ ...settings.get(), wrong: book });
     // 整课练完才有课可归档（错题本混练没有单一课）；整课从头全对才突出，只练一部分全对不算
     const lesson = id !== 'wrong' && items[0]?.lesson;
     const archBtn = !lesson ? '' : lesson.archived ? '<button disabled>已归档</button>' : `<button id="arch" class="${!given && first === n ? 'primary' : ''}">归档这一课</button>`;
     view.innerHTML = `<div class="result"><div class="score">${first} / ${n}</div><p class="muted">一次答对</p>
-      <ul>${items.map((q, k) => `<li><span class="k ${done.get(k) ? 'ok' : 'no'}">${done.get(k) ? '✓' : '△'}</span><b>${esc(q.item.en)}</b><span class="muted">${esc(q.item.zh)}</span></li>`).join('')}</ul>
+      <ul>${items.map((q, k) => `<li><span class="k ${done.get(k) ? 'ok' : 'no'}">${done.get(k) ? '✓' : '△'}</span><b>${esc(q.item.en)}</b><span class="muted">${esc(q.item.zh)}</span><label class="chk"><input type="checkbox" data-key="${esc(keyOf(q))}"${book[keyOf(q)] ? ' checked' : ''}> 错题本</label></li>`).join('')}</ul>
       <div class="bar"><button id="again" class="primary">再来一遍</button>${missed.length ? `<button id="retry">再练错的 ${missed.length} 个</button>` : ''}${archBtn}<a class="btn" href="#/">回列表</a></div></div>`;
+    // 勾 = 在错题本；同一个词两个框共用一个键，一起勾一起取消
+    view.querySelector('ul').onchange = e => {
+      const k = e.target.dataset.key; if (!k) return;
+      const b = { ...settings.get().wrong };
+      if (e.target.checked) b[k] ||= Date.now(); else delete b[k];
+      settings.set({ ...settings.get(), wrong: b });
+      for (const c of view.querySelectorAll('input[data-key]')) if (c.dataset.key === k) c.checked = e.target.checked;
+    };
     const arch = view.querySelector('#arch');
     if (arch) arch.onclick = async () => { await setArchived(id, true); toast('已收进「已学完」'); location.hash = '#/'; };
     view.querySelector('#again').onclick = () => renderStudy(view, id, quiz0); // 重练刚才这份题单，错题本练完全对也不会变成空页
