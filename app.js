@@ -1,9 +1,10 @@
 // 入口：hash 路由、课程列表、设置页、导入导出、注册 PWA
-import { db, esc, settings, toast, LANGS, langOf } from './lib.js';
+import { db, esc, settings, toast, LANGS, langOf, wrongEntries } from './lib.js';
 import { listModels } from './ai.js';
 import { speak } from './tts.js';
 import { renderEditor } from './editor.js';
 import { renderStudy } from './study.js';
+import { PRESETS, pingAnki, listDecks, exportWrong } from './anki.js';
 
 const view = document.getElementById('view');
 
@@ -14,16 +15,22 @@ async function renderList() {
   // 没手动切过标签时：自己有课就看自己的，没有就看内置的，别让新用户开门见空页
   const tab = settings.get().homeTab || (mine.length ? 'mine' : 'packs');
   const shown = tab === 'packs' ? packs : mine, packLang = settings.get().packLang || 'en';
+  const wrongs = wrongEntries(lessons, settings.get().wrong);
+  const wrongPanel = `
+    <div class="bar">${wrongs.length ? `<a class="btn primary" href="#/study/wrong">练习错题本</a><button id="exportAnki">导出到 Anki</button><label class="chk"><input type="checkbox" id="ankiClear"${settings.get().ankiClear ? ' checked' : ''}> 导出后清空错题本</label>` : ''}<button id="clearWrong">清空错题本</button></div>
+    ${wrongs.length ? `<div class="words wrongs">${wrongs.map(q =>
+      `<div><b>${esc(q.item.en)}</b> ${esc(q.item.zh)} <span class="muted">${esc(q.lesson.title)}</span><button data-unwrong="${esc(q.key)}">移出</button></div>`
+    ).join('')}</div>` : '<div class="empty"><b>错题本是空的</b>练完没一次答对的词会记在这里，下次一次答对就会拿掉。</div>'}`;
   view.innerHTML = `
     <div class="bar"><a class="btn primary" href="#/edit">＋ 新建课程</a>
-      <span class="seg" id="tabs"><button data-tab="mine" class="${tab === 'mine' ? 'on' : ''}">我的课程 ${mine.length}</button><button data-tab="packs" class="${tab === 'packs' ? 'on' : ''}">内置课程 ${packs.length}</button></span>
+      <span class="seg" id="tabs"><button data-tab="mine" class="${tab === 'mine' ? 'on' : ''}">我的课程 ${mine.length}</button><button data-tab="packs" class="${tab === 'packs' ? 'on' : ''}">内置课程 ${packs.length}</button><button data-tab="wrong" class="${tab === 'wrong' ? 'on' : ''}">错题本 ${wrongs.length}</button></span>
       ${tab === 'packs' ? `<select id="packLang" title="内置课程用哪种语言">${Object.entries(LANGS).map(([k, L]) => `<option value="${k}" ${k === packLang ? 'selected' : ''}>${L.name}</option>`).join('')}</select>` : ''}
       <span style="flex:1"></span><button id="export">导出备份</button>
       <label class="btn">导入<input type="file" id="import" accept=".json" hidden></label></div>
-    ${shown.length ? '' : tab === 'packs' ? '<div class="empty"><b>内置课程都删掉了</b>去「我的课程」看看自己的课吧。</div>' : '<div class="empty"><b>还没有自己的课程</b>点「新建课程」，传一张图，让 AI 把物品框出来；或者先去「内置课程」玩现成的。</div>'}
-    <div class="cards">${shown.map(l => `<div class="card"><a class="pic" href="#/study/${l.id}"><img src="${URL.createObjectURL(l.image)}"><span class="n">${l.items.length} 词</span>${langOf(l) === 'en' ? '' : `<span class="n lang">${LANGS[langOf(l)].name}</span>`}</a>
+    ${tab === 'wrong' ? wrongPanel : shown.length ? '' : tab === 'packs' ? '<div class="empty"><b>内置课程都删掉了</b>去「我的课程」看看自己的课吧。</div>' : '<div class="empty"><b>还没有自己的课程</b>点「新建课程」，传一张图，让 AI 把物品框出来；或者先去「内置课程」玩现成的。</div>'}
+    ${tab === 'wrong' ? '' : `<div class="cards">${shown.map(l => `<div class="card"><a class="pic" href="#/study/${l.id}"><img src="${URL.createObjectURL(l.image)}"><span class="n">${l.items.length} 词</span>${langOf(l) === 'en' ? '' : `<span class="n lang">${LANGS[langOf(l)].name}</span>`}</a>
       <div class="body"><b>${esc(l.title)}</b>
-      <div class="bar"><a class="btn primary" href="#/study/${l.id}">开始学</a><a class="btn" href="#/edit/${l.id}">编辑</a><span style="flex:1"></span><button class="danger" data-del="${l.id}">删</button></div></div></div>`).join('')}</div>`;
+      <div class="bar"><a class="btn primary" href="#/study/${l.id}">开始学</a><a class="btn" href="#/edit/${l.id}">编辑</a><span style="flex:1"></span><button class="danger" data-del="${l.id}">删</button></div></div></div>`).join('')}</div>`}`;
   view.querySelector('#tabs').onclick = e => { const t = e.target.dataset.tab; if (t) { settings.set({ ...settings.get(), homeTab: t }); renderList(); } };
   const sel = view.querySelector('#packLang');
   if (sel) sel.onchange = async () => {
@@ -32,6 +39,26 @@ async function renderList() {
     catch (e) { alert('没换成，检查一下网络：' + e.message); sel.value = packLang; }
   };
   view.onclick = async e => {
+    if (e.target.id === 'exportAnki') {
+      try { if (await exportWrong(wrongs)) renderList(); }
+      catch (err) { alert('导出失败：' + err.message); }
+      return;
+    }
+    if (e.target.id === 'ankiClear') {
+      settings.set({ ...settings.get(), ankiClear: e.target.checked });
+      return;
+    }
+    if (e.target.id === 'clearWrong' && confirm('把记着的错词都拿掉？')) {
+      settings.set({ ...settings.get(), wrong: {} }); renderList(); return;
+    }
+    const k = e.target.dataset.unwrong;
+    if (k) {
+      const book = { ...settings.get().wrong };
+      delete book[k];
+      settings.set({ ...settings.get(), wrong: book });
+      renderList();
+      return;
+    }
     const id = e.target.dataset.del;
     if (id && confirm('删除这一课？')) { await db.del(id); renderList(); }
   };
@@ -87,8 +114,11 @@ async function switchPacks(lang) {
 
 function renderSettings() {
   const s = settings.get();
+  const preset = PRESETS[s.ankiPreset] ? s.ankiPreset : 'pic';
   view.innerHTML = `
     <div style="max-width:560px;margin:0 auto">
+      <div class="bar"><span class="seg" id="setTabs"><button data-stab="api" class="on">接口</button><button data-stab="anki">Anki</button></span></div>
+      <div id="pane-api">
       <div class="panel">
       <h3 style="margin-top:0">AI 接口（OpenAI 兼容）</h3>
       <label class="field">API 地址 <input id="apiUrl" placeholder="https://xxx/v1" value="${esc(s.apiUrl)}"></label>
@@ -112,11 +142,56 @@ function renderSettings() {
       <datalist id="voices"><option>en-US-JennyNeural<option>en-US-GuyNeural<option>en-US-AriaNeural<option>en-GB-SoniaNeural<option>en-GB-RyanNeural<option>en-AU-NatashaNeural</datalist>
       <button id="test">🔊 试听 hello</button>
       </div>
+      </div>
+      <div id="pane-anki" hidden>
+      <div class="panel">
+      <h3 style="margin-top:0">连接状态</h3>
+      <p id="ankiStatus">尚未连接</p>
+      <p class="muted" id="ankiHelp" hidden>需要电脑上开着 Anki 桌面版并装 AnkiConnect 插件（代码 2055492159）；第一次连接 Anki 会弹框问是否允许，点「是」；手机浏览器连不上（AnkiConnect 只有桌面版有）。</p>
+      <button id="ankiPing">重新连接</button>
+      </div>
+      <div class="panel" style="margin-top:16px">
+      <label class="field">牌组 <select id="ankiDeck">${s.ankiDeck ? `<option selected>${esc(s.ankiDeck)}</option>` : ''}</select></label>
+      <label class="field">或新建牌组 <input id="ankiNew" placeholder="填了就用新名字"></label>
+      <label class="field">卡片样式 <select id="ankiPreset">${Object.entries(PRESETS).map(([k, p]) => `<option value="${k}" ${k === preset ? 'selected' : ''}>${p.name}</option>`).join('')}</select></label>
+      <p class="muted" id="ankiHint">${PRESETS[preset].hint}</p>
+      </div>
+      </div>
       <p class="muted">Key 只存在这台设备的浏览器里，不会上传到别处。</p>
       <div class="bar"><button id="save" class="primary">保存</button></div>
     </div>`;
   const $ = s => view.querySelector(s);
-  const collect = () => ({ ...s, ...Object.fromEntries(['apiUrl', 'apiKey', 'visionModel', 'imageApiUrl', 'imageApiKey', 'imageModel', 'voice'].map(k => [k, $('#' + k).value.trim()])) });
+  const collect = () => ({
+    ...s,
+    ...Object.fromEntries(['apiUrl', 'apiKey', 'visionModel', 'imageApiUrl', 'imageApiKey', 'imageModel', 'voice'].map(k => [k, $('#' + k).value.trim()])),
+    ankiDeck: $('#ankiNew').value.trim() || $('#ankiDeck').value || s.ankiDeck || '',
+    ankiPreset: $('#ankiPreset').value || 'pic',
+  });
+  const connectAnki = async () => {
+    $('#ankiStatus').textContent = '正在连接…';
+    $('#ankiHelp').hidden = true;
+    try {
+      const r = await pingAnki();
+      const decks = await listDecks();
+      const cur = $('#ankiNew').value.trim() || s.ankiDeck || '';
+      if (cur && !decks.includes(cur)) decks.unshift(cur);
+      $('#ankiDeck').innerHTML = decks.map(d => `<option${d === (cur || decks[0]) ? ' selected' : ''}>${esc(d)}</option>`).join('');
+      $('#ankiStatus').textContent = `已连接 Anki（AnkiConnect v${r.version || 6}）`;
+    } catch {
+      $('#ankiStatus').textContent = '未连接';
+      $('#ankiHelp').hidden = false;
+    }
+  };
+  $('#setTabs').onclick = e => {
+    const t = e.target.dataset.stab;
+    if (!t) return;
+    $('#pane-api').hidden = t !== 'api';
+    $('#pane-anki').hidden = t !== 'anki';
+    $('#setTabs').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.stab === t));
+    if (t === 'anki') connectAnki();
+  };
+  $('#ankiPing').onclick = connectAnki;
+  $('#ankiPreset').onchange = () => { $('#ankiHint').textContent = PRESETS[$('#ankiPreset').value].hint; };
   $('#fetch').onclick = async () => {
     settings.set(collect());
     try {

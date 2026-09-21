@@ -19,8 +19,17 @@ export const db = {
   audioPut: (k, v) => tx('audio', 'readwrite', s => s.put(v, k)),
 };
 export const settings = {
-  get: () => ({ voice: 'en-US-JennyNeural', hintMode: 'always', studyMode: 'type', ...JSON.parse(localStorage.kantu || '{}') }),
+  get: () => ({ voice: 'en-US-JennyNeural', hintMode: 'always', studyMode: 'type', wrong: {}, ...JSON.parse(localStorage.kantu || '{}') }),
   set: o => localStorage.kantu = JSON.stringify(o),
+};
+// 错题本：键是「课程id|外文词」，读的时候按现有课程过滤（已删的课不出现，不主动清存储）
+export const wrongEntries = (lessons, book) => {
+  const byId = Object.fromEntries(lessons.map(l => [l.id, l]));
+  return Object.entries(book || {}).map(([k, t]) => {
+    const p = k.indexOf('|'), lesson = byId[k.slice(0, p)];
+    const item = lesson?.items.find(it => it.en === k.slice(p + 1));
+    return item ? { lesson, item, t, key: k } : null;
+  }).filter(Boolean).sort((a, b) => b.t - a.t);
 };
 // 支持的语种：界面名、Edge 发音人、浏览器朗读的语言码、给 AI 的语言名、读音字段叫什么、判对时忽略的冠词
 export const LANGS = {
@@ -34,6 +43,7 @@ export const LANGS = {
 export const langOf = lesson => LANGS[lesson?.lang] ? lesson.lang : 'en'; // 老课、内置课、旧备份没这个字段，一律英语
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export function toast(msg, ms = 2500) {
+  document.querySelectorAll('.toast').forEach(d => d.remove()); // 新的顶掉旧的，连着报进度时不会叠成一摞
   const d = Object.assign(document.createElement('div'), { className: 'toast', textContent: msg });
   document.body.append(d); setTimeout(() => d.remove(), ms);
 }

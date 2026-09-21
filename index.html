@@ -36,7 +36,9 @@ button.danger:hover{border-color:var(--bad)}
 input,select,textarea{background:#fff;color:var(--ink);border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;font:inherit;width:100%;outline:none}
 input:focus,select:focus{border-color:var(--mark);box-shadow:0 0 0 3px var(--mark-soft)}
 label.field{display:block;margin:10px 0;color:var(--dim);font-size:13px;font-weight:700}
-label.field input{margin-top:4px;font-weight:500}
+label.field input,label.field select{margin-top:4px;font-weight:500}
+.chk{display:inline-flex;align-items:center;gap:6px;font-size:14px;font-weight:700;color:var(--dim);cursor:pointer;user-select:none}
+.bar .chk input{width:auto;flex:none;min-width:0}
 .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
 .bar input{width:auto;flex:1;min-width:140px}
 .bar select{width:auto}
@@ -99,6 +101,10 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;paddi
 .words b{font-weight:700}
 .words .muted{margin-left:auto;font-size:13px}
 .words:empty{display:none}
+.wrongs{max-width:640px;margin-top:8px}
+.wrongs div{cursor:default;align-items:center}
+.wrongs .muted{margin-left:0}
+.wrongs button{margin-left:auto;padding:4px 10px;font-size:13px}
 .hintbar{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin:0 0 8px}
 .hintbar b{white-space:nowrap}
 .hintbar .muted{text-align:right;font-size:13px}
