@@ -13,10 +13,11 @@ async function renderList() {
   const mine = lessons.filter(l => !isPack(l)), packs = lessons.filter(isPack);
   // 没手动切过标签时：自己有课就看自己的，没有就看内置的，别让新用户开门见空页
   const tab = settings.get().homeTab || (mine.length ? 'mine' : 'packs');
-  const shown = tab === 'packs' ? packs : mine;
+  const shown = tab === 'packs' ? packs : mine, packLang = settings.get().packLang || 'en';
   view.innerHTML = `
     <div class="bar"><a class="btn primary" href="#/edit">＋ 新建课程</a>
       <span class="seg" id="tabs"><button data-tab="mine" class="${tab === 'mine' ? 'on' : ''}">我的课程 ${mine.length}</button><button data-tab="packs" class="${tab === 'packs' ? 'on' : ''}">内置课程 ${packs.length}</button></span>
+      ${tab === 'packs' ? `<select id="packLang" title="内置课程用哪种语言">${Object.entries(LANGS).map(([k, L]) => `<option value="${k}" ${k === packLang ? 'selected' : ''}>${L.name}</option>`).join('')}</select>` : ''}
       <span style="flex:1"></span><button id="export">导出备份</button>
       <label class="btn">导入<input type="file" id="import" accept=".json" hidden></label></div>
     ${shown.length ? '' : tab === 'packs' ? '<div class="empty"><b>内置课程都删掉了</b>去「我的课程」看看自己的课吧。</div>' : '<div class="empty"><b>还没有自己的课程</b>点「新建课程」，传一张图，让 AI 把物品框出来；或者先去「内置课程」玩现成的。</div>'}
@@ -24,6 +25,12 @@ async function renderList() {
       <div class="body"><b>${esc(l.title)}</b>
       <div class="bar"><a class="btn primary" href="#/study/${l.id}">开始学</a><a class="btn" href="#/edit/${l.id}">编辑</a><span style="flex:1"></span><button class="danger" data-del="${l.id}">删</button></div></div></div>`).join('')}</div>`;
   view.querySelector('#tabs').onclick = e => { const t = e.target.dataset.tab; if (t) { settings.set({ ...settings.get(), homeTab: t }); renderList(); } };
+  const sel = view.querySelector('#packLang');
+  if (sel) sel.onchange = async () => {
+    if (!confirm(`把 ${packs.length} 课内置课程换成${LANGS[sel.value].name}版？你在内置课上改过的词会被换掉。`)) { sel.value = packLang; return; }
+    try { await switchPacks(sel.value); toast(`内置课程已换成${LANGS[sel.value].name}`); renderList(); }
+    catch (e) { alert('没换成，检查一下网络：' + e.message); sel.value = packLang; }
+  };
   view.onclick = async e => {
     const id = e.target.dataset.del;
     if (id && confirm('删除这一课？')) { await db.del(id); renderList(); }
@@ -51,21 +58,31 @@ function download(name, text) {
   a.click();
 }
 
-// 内置课程：第一次打开把 packs/ 里的课放进本机课程库（已有同 id 的跳过），之后不再放——删了不会再冒出来
+// 内置课程：index.json 里每课带英语词表 + 其他语种的译词（tr[lang] 和 items 一一对应，框 / 中文 / 词性共用）
+const fetchPacks = async () => { const r = await fetch('packs/index.json'); if (!r.ok) throw new Error(r.status); return r.json(); };
+const packItems = (p, lang) => lang === 'en' || !p.tr?.[lang] ? p.items : p.items.map((it, k) => ({ ...it, ...p.tr[lang][k] }));
+// 第一次打开把内置课放进本机课程库（已有同 id 的跳过），之后不再放——删了不会再冒出来
 async function addPacks() {
   if (settings.get().packsAdded) return 0;
-  const have = new Set((await db.all()).map(l => l.id));
-  const r = await fetch('packs/index.json');
-  if (!r.ok) throw new Error(r.status);
+  const have = new Set((await db.all()).map(l => l.id)), lang = settings.get().packLang || 'en';
   let k = 0;
-  for (const [i, p] of (await r.json()).entries()) {
+  for (const [i, p] of (await fetchPacks()).entries()) {
     if (have.has(p.id)) continue;
     const image = await (await fetch('packs/' + p.image)).blob();
-    await db.put({ id: p.id, title: p.title, items: p.items, image, created: Date.UTC(2026, 0, 1) - i * 1000 }); // 固定旧时间：排在用户自己的课后面
+    await db.put({ id: p.id, title: p.title, items: packItems(p, lang), lang, image, created: Date.UTC(2026, 0, 1) - i * 1000 }); // 固定旧时间：排在用户自己的课后面
     k++;
   }
   settings.set({ ...settings.get(), packsAdded: true });
   return k;
+}
+// 内置课换语种：原地替换本机已有的那几课的词表（删掉的不复活，图不重下）
+async function switchPacks(lang) {
+  const packs = await fetchPacks();
+  for (const p of packs) {
+    const l = await db.get(p.id);
+    if (l) await db.put({ ...l, items: packItems(p, lang), lang });
+  }
+  settings.set({ ...settings.get(), packLang: lang });
 }
 
 function renderSettings() {
