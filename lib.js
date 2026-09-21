@@ -19,7 +19,7 @@ export const db = {
   audioPut: (k, v) => tx('audio', 'readwrite', s => s.put(v, k)),
 };
 export const settings = {
-  get: () => ({ voice: 'en-US-JennyNeural', hintMode: 'always', ...JSON.parse(localStorage.kantu || '{}') }),
+  get: () => ({ voice: 'en-US-JennyNeural', hintMode: 'always', studyMode: 'type', ...JSON.parse(localStorage.kantu || '{}') }),
   set: o => localStorage.kantu = JSON.stringify(o),
 };
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
