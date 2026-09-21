@@ -1,16 +1,22 @@
 // 学习页：四种练法（打英文 / 听音点图 / 选英文 / 选中文），框亮起或全部可点，走完出结果
-import { db, esc, settings } from './lib.js';
+import { db, esc, settings, LANGS, langOf } from './lib.js';
 import { speak } from './tts.js';
 import { boxStyle } from './editor.js';
 
-const norm = s => s.toLowerCase().trim().replace(/^(a|an|the)\s+/, '').replace(/[^a-z\s'-]/g, '').replace(/\s+/g, ' ').trim();
-// 判对：不分大小写、忽略冠词和标点、AI 给的同义词算对、单复数（s / es）也算对
-export const isRight = (input, it) => {
-  const a = norm(input);
-  return !!a && [it.en, ...(it.alts || [])].some(w => { const b = norm(w); return [b, b + 's', b + 'es'].includes(a) || [a + 's', a + 'es'].includes(b); });
+// 只留字母、数字（含重音字母、假名、汉字、谚文）和空格、撇号、连字符；冠词按语种忽略
+const norm = (s, lang) => {
+  const a = LANGS[lang].articles;
+  s = String(s).normalize('NFC').toLowerCase().trim();
+  if (a) s = s.replace(a, '');
+  return s.replace(/[^\p{L}\p{N}\s'-]/gu, '').replace(/\s+/g, ' ').trim();
+};
+// 判对：不分大小写、忽略冠词和标点、AI 给的同义词（日语的假名读音也在里面）算对、单复数（s / es）也算对
+export const isRight = (input, it, lang = 'en') => {
+  const a = norm(input, lang);
+  return !!a && [it.en, ...(it.alts || [])].some(w => { const b = norm(w, lang); return [b, b + 's', b + 'es'].includes(a) || [a + 's', a + 'es'].includes(b); });
 };
 
-const MODES = { type: '打英文', tap: '听音点图', pickEn: '选英文', pickZh: '选中文' };
+const MODES = { type: '打单词', tap: '听音点图', pickEn: '选单词', pickZh: '选中文' };
 const HINTS = { always: '一直显示', wrong: '答错后显示', never: '不显示' };
 const TIPS = {
   type: '<kbd>Enter</kbd> 提交 · <kbd>Ctrl</kbd>+<kbd>\'</kbd> 发音 · <kbd>Ctrl</kbd>+<kbd>;</kbd> 答案',
@@ -22,7 +28,7 @@ const shuffle = a => { for (let k = a.length - 1; k > 0; k--) { const j = Math.f
 export async function renderStudy(view, id) {
   const lesson = await db.get(id);
   if (!lesson?.items.length) { view.innerHTML = '<div class="empty"><b>这一课还没有词</b>先去编辑页让 AI 识别一下</div>'; return; }
-  const s = settings.get(), mode = MODES[s.studyMode] ? s.studyMode : 'type', pick = mode.startsWith('pick');
+  const s = settings.get(), mode = MODES[s.studyMode] ? s.studyMode : 'type', pick = mode.startsWith('pick'), lang = langOf(lesson);
   // 点图模式打乱出题顺序，不然按位置就能记住
   const items = mode === 'tap' ? shuffle([...lesson.items]) : lesson.items, n = items.length, done = new Map(); // i -> 是否一次答对
   let i = 0, wrong = 0, revealed = false, hintMode = s.hintMode, choices = [], bad = new Set();
@@ -42,7 +48,7 @@ export async function renderStudy(view, id) {
         : '<div class="box sel" id="box"></div>'}</div>
       <div class="panel deck">
         <div class="hint" id="hint"></div>
-        ${mode === 'type' ? '<input class="big" id="in" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="输入英文">' : ''}
+        ${mode === 'type' ? `<input class="big" id="in" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="输入${LANGS[lang].name}">` : ''}
         ${pick ? '<div class="choices" id="choices"></div>' : ''}
         <div class="answer" id="ans"></div>
         <div class="bar">
@@ -93,7 +99,7 @@ export async function renderStudy(view, id) {
     }
     show();
     if (!inp) $('.study').focus({ preventScroll: true }); // 快捷键挂在 view 上，焦点得在里面
-    if (mode === 'tap' && !done.has(i)) speak(items[i].en);
+    if (mode === 'tap' && !done.has(i)) speak(items[i].en, lang);
   }
   // skipDone：答对后自动前进时跳过已答完的，直到剩下的都做完
   const go = (d, skipDone) => {
@@ -102,13 +108,13 @@ export async function renderStudy(view, id) {
   };
   function correct() {
     done.set(i, wrong === 0 && !revealed);
-    if (mode !== 'tap') speak(items[i].en); // 点图模式刚播过，不重复
+    if (mode !== 'tap') speak(items[i].en, lang); // 点图模式刚播过，不重复
     show();
     setTimeout(() => { if (root.isConnected) done.size === n ? finish() : go(1, true); }, 900); // 900ms 内切了模式或离开页面就作废
   }
   function submit() {
     if (done.has(i)) return go(1, true);
-    if (isRight(inp.value, items[i])) return correct();
+    if (isRight(inp.value, items[i], lang)) return correct();
     wrong++; inp.className = 'big'; void inp.offsetWidth; inp.className = 'big bad';
     drawHint(); inp.select();
   }
@@ -143,9 +149,10 @@ export async function renderStudy(view, id) {
   if (mode === 'tap') $('#stage').onclick = tapAt;
   $('#prev').onclick = () => go(-1);
   $('#next').onclick = () => go(1);
-  $('#say').onclick = () => speak(items[i].en);
+  $('#say').onclick = () => speak(items[i].en, lang);
   $('#show').onclick = () => { revealed = true; show(); };
   view.onkeydown = e => {
+    if (e.isComposing) return; // 日语 / 韩语输入法选字时的回车不算提交
     if (e.key === 'Enter') mode === 'type' ? submit() : go(1);
     else if (e.ctrlKey && e.key === "'") $('#say').click();
     else if (e.ctrlKey && e.key === ';') $('#show').click();

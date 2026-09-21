@@ -1,5 +1,5 @@
 // 调 OpenAI 兼容接口：拉模型、识图框物品、生图
-import { settings } from './lib.js';
+import { settings, LANGS } from './lib.js';
 
 function cfg() {
   const s = settings.get();
@@ -34,22 +34,26 @@ async function draw(blob, max) {
 export const toJpeg = async (blob, max = 1024) => (await draw(blob, max)).toDataURL('image/jpeg', 0.85);
 export const shrink = async (blob, max = 1600) => new Promise(r => draw(blob, max).then(c => c.toBlob(r, 'image/jpeg', 0.85)));
 
-const PROMPT = `Identify every distinct object in this image that an English learner should be able to name (clothes, shoes, furniture, food, tools, animals, etc). Skip tiny or ambiguous details.
+// 识图 prompt 按课程语种生成；数据字段仍叫 en（改字段名会连累内置课和备份），存的是该语种的词
+export const prompt = lang => {
+  const L = LANGS[lang] || LANGS.en;
+  return `Identify every distinct object in this image that a ${L.ai} learner should be able to name (clothes, shoes, furniture, food, tools, animals, etc). Skip tiny or ambiguous details.
 Return ONLY a JSON array, no prose, no markdown. Each element:
-{"en":"skirt","zh":"裙子","ipa":"/skɜːrt/","pos":"n.","alts":["dress"],"box":[ymin,xmin,ymax,xmax]}
-- en: the most common everyday English word (plural if the image shows a pair/multiple, e.g. "jeans", "boots")
+{"en":"<${L.ai} word>","zh":"裙子","ipa":"<${L.ipa}>","pos":"n.","alts":["<alternative>"],"box":[ymin,xmin,ymax,xmax]}
+- en: the most common everyday ${L.ai} word for the object, written as it is normally written, WITHOUT any article (plural if the image shows a pair/multiple)
 - zh: simplified Chinese
-- ipa: American English IPA
-- alts: other acceptable English answers (synonyms, British spelling), may be empty
+- ipa: ${L.ipa}
+- alts: other acceptable ${L.ai} answers (synonyms, spelling variants${lang === 'ja' ? '; ALWAYS include the hiragana reading, and the katakana form if the word is usually written in katakana' : ''}), may be empty
 - box: bounding box normalized to 0-1000 of the image, [ymin,xmin,ymax,xmax], tight around the object
 One element per object, no duplicates.`;
+};
 
-export async function detect(blob) {
+export async function detect(blob, lang = 'en') {
   const s = cfg();
   if (!s.visionModel) throw new Error('请先在「设置」里选识别模型');
   const j = await call('/chat/completions', {
     model: s.visionModel, max_tokens: 8000,
-    messages: [{ role: 'user', content: [{ type: 'text', text: PROMPT }, { type: 'image_url', image_url: { url: await toJpeg(blob) } }] }],
+    messages: [{ role: 'user', content: [{ type: 'text', text: prompt(lang) }, { type: 'image_url', image_url: { url: await toJpeg(blob) } }] }],
   });
   const c = j.choices[0].message.content;
   let items; try { items = JSON.parse(c.slice(c.indexOf('['), c.lastIndexOf(']') + 1)); } catch { throw new Error('模型没按格式返回：' + c.slice(0, 200)); }
@@ -58,10 +62,21 @@ export async function detect(blob) {
     .map(i => ({ en: String(i.en), zh: i.zh || '', ipa: i.ipa || '', pos: i.pos || '', alts: (i.alts || []).map(String), box: i.box.map(n => Math.max(0, Math.min(1000, +n || 0))) }));
 }
 
-export async function generateImage(prompt) {
+// 用户只给主题（一个词或一段话，中文也行），后面固定接「这图是拿来看图认物的」+ 规矩：每种物品只出现一次、分开摆、不要文字、不要人
+const scene = topic => `Create a picture for a vocabulary-learning app: learners look at the picture and name the objects in it.
+Scene / topic: ${topic}
+Rules:
+- Include 8 to 14 everyday objects that fit the scene, each one a distinct kind of thing a learner should be able to name.
+- Each kind of object appears EXACTLY ONCE. No duplicates: one book (not a shelf of books), one plant, one rug, one cup.
+- Objects are clearly separated from each other, fully visible, not overlapping, not stacked or piled; no object is tiny.
+- Absolutely NO text, letters, numbers, logos, posters with words, labels or signs anywhere in the picture.
+- No people, no hands, no faces.
+- Eye-level view, even soft lighting, clean uncluttered background, clean flat illustration style.`;
+
+export async function generateImage(topic) {
   const s = cfg();
   if (!s.imageModel) throw new Error('请先在「设置」里选生图模型');
-  const j = await call('/images/generations', { model: s.imageModel, prompt, n: 1, size: '1024x1024' }, true);
+  const j = await call('/images/generations', { model: s.imageModel, prompt: scene(topic), n: 1, size: '1024x1024' }, true);
   const d = j.data[0];
   const r = await fetch(d.b64_json ? 'data:image/png;base64,' + d.b64_json : d.url);
   return r.blob();

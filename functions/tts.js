@@ -42,7 +42,7 @@ export async function onRequestGet({ request }) {
   ws.send(`X-Timestamp:${ts}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n` +
     `{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}\r\n`);
   ws.send(`X-RequestId:${uuid()}\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:${ts}Z\r\nPath:ssml\r\n\r\n` +
-    `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='${esc(voice)}'><prosody pitch='+0Hz' rate='+0%' volume='+0%'>${esc(text)}</prosody></voice></speak>`);
+    `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='${esc(voice.slice(0, 5))}'><voice name='${esc(voice)}'><prosody pitch='+0Hz' rate='+0%' volume='+0%'>${esc(text)}</prosody></voice></speak>`);
 
   // 先把二进制帧按顺序攒下来（本地 wrangler 给 Blob、线上给 ArrayBuffer，收完再统一解析）
   const frames = [];

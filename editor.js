@@ -1,5 +1,5 @@
 // 备课页：传图 / AI 生图 → AI 识别出框 → 手动改词、拖框、删框 → 保存
-import { db, esc, toast } from './lib.js';
+import { db, esc, toast, settings, LANGS, langOf } from './lib.js';
 import { detect, generateImage, shrink } from './ai.js';
 import { speak } from './tts.js';
 
@@ -8,11 +8,13 @@ const pct = v => (v / 10).toFixed(2) + '%';
 export const boxStyle = ([y1, x1, y2, x2]) => `left:${pct(x1)};top:${pct(y1)};width:${pct(x2 - x1)};height:${pct(y2 - y1)};z-index:${1000 - Math.round((x2 - x1) * (y2 - y1) / 1000)}`;
 
 export async function renderEditor(view, id) {
-  const lesson = (id && await db.get(id)) || { id: crypto.randomUUID(), title: '', image: null, items: [], created: Date.now() };
+  const lesson = (id && await db.get(id)) || { id: crypto.randomUUID(), title: '', image: null, items: [], created: Date.now(), lang: settings.get().lastLang };
+  lesson.lang = langOf(lesson); // 老课没这个字段：当英语，保存时写进去
   let sel = -1, imgUrl = lesson.image && URL.createObjectURL(lesson.image);
   view.innerHTML = `
     <div class="bar">
       <input id="title" placeholder="课程标题，比如：衣柜" value="${esc(lesson.title)}">
+      <select id="lang" title="这课学哪种语言">${Object.entries(LANGS).map(([k, L]) => `<option value="${k}" ${k === lesson.lang ? 'selected' : ''}>${L.name}</option>`).join('')}</select>
       <label class="btn">上传图片<input type="file" id="file" accept="image/*" hidden></label>
       <button id="gen">AI 生图</button>
       <button id="detect">AI 识别</button>
@@ -43,9 +45,9 @@ export async function renderEditor(view, id) {
     $('#panel').innerHTML = `
       <div class="hintbar"><b>${lesson.items.length} 个词</b><span class="muted">${it ? '拖框移动 · 方向键微调 · Delete 删' : lesson.items.length ? '点框或点词来编辑' : '点「AI 识别」自动框出物品'}</span></div>
       ${it ? `<div class="form">
-      <label class="field">英文 <input id="f-en" value="${esc(it.en)}"></label>
+      <label class="field">${LANGS[lesson.lang].name}单词 <input id="f-en" value="${esc(it.en)}"></label>
       <label class="field">中文 <input id="f-zh" value="${esc(it.zh)}"></label>
-      <div class="row"><label class="field">音标 <input id="f-ipa" value="${esc(it.ipa)}"></label><label class="field">词性 <input id="f-pos" value="${esc(it.pos)}"></label></div>
+      <div class="row"><label class="field">${LANGS[lesson.lang].ipaName} <input id="f-ipa" value="${esc(it.ipa)}"></label><label class="field">词性 <input id="f-pos" value="${esc(it.pos)}"></label></div>
       <label class="field">也算对（逗号分隔）<input id="f-alts" value="${esc(it.alts.join(', '))}"></label>
       <div class="bar"><button id="say">🔊 试听</button><button id="del" class="danger">删除这个框</button></div></div>` : ''}
       <div class="words">${lesson.items.map((x, i) => `<div class="${i === sel ? 'sel' : ''}" data-i="${i}"><b>${esc(x.en)}</b><span class="muted">${esc(x.zh)}</span></div>`).join('')}</div>`;
@@ -53,7 +55,7 @@ export async function renderEditor(view, id) {
     if (!it) return;
     for (const k of ['en', 'zh', 'ipa', 'pos']) $('#f-' + k).oninput = e => { it[k] = e.target.value; touch(); if (k === 'en') drawStage(); };
     $('#f-alts').oninput = e => { it.alts = e.target.value.split(/[,，]/).map(s => s.trim()).filter(Boolean); touch(); };
-    $('#say').onclick = () => speak(it.en);
+    $('#say').onclick = () => speak(it.en, lesson.lang);
     $('#del').onclick = removeSel;
   }
   const select = i => { sel = i; drawStage(); drawPanel(); };
@@ -100,14 +102,14 @@ export async function renderEditor(view, id) {
 
   $('#file').onchange = e => e.target.files[0] && setImage(e.target.files[0]).catch(err => alert('这张图打不开：' + err.message));
   $('#gen').onclick = async () => {
-    const p = prompt('描述想要的图（英文更准）：', 'A tidy children\'s bedroom with a bed, desk, lamp, bookshelf, toys and a window, flat illustration style');
-    if (!p) return;
-    await busy($('#gen'), '生图中…', async () => setImage(await generateImage(p)));
+    const p = prompt('想画什么？一个词也行，比如：客厅 / 冰箱 / 文具', '');
+    if (!p?.trim()) return;
+    await busy($('#gen'), '生图中…', async () => setImage(await generateImage(p.trim())));
   };
   $('#detect').onclick = async () => {
     if (!lesson.image) return toast('先放一张图');
     if (lesson.items.length && !confirm('会替换现有的框，继续？')) return;
-    await busy($('#detect'), '识别中…', async () => { lesson.items = await detect(lesson.image); sel = -1; touch(); drawStage(); drawPanel(); toast(`识别出 ${lesson.items.length} 个物品`); });
+    await busy($('#detect'), '识别中…', async () => { lesson.items = await detect(lesson.image, lesson.lang); sel = -1; touch(); drawStage(); drawPanel(); toast(`识别出 ${lesson.items.length} 个物品`); });
   };
   $('#add').onclick = () => {
     if (!lesson.image) return toast('先放一张图');
@@ -124,6 +126,8 @@ export async function renderEditor(view, id) {
     location.hash = '#/';
   };
   $('#title').oninput = touch;
+  // 换语种：发音立刻跟着变，词表要再点「AI 识别」才换；记住上次选的，常学一种语言就不用每次点
+  $('#lang').onchange = e => { lesson.lang = e.target.value; settings.set({ ...settings.get(), lastLang: lesson.lang }); touch(); drawPanel(); };
   drawStage(); drawPanel();
 }
 

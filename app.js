@@ -1,5 +1,5 @@
 // 入口：hash 路由、课程列表、设置页、导入导出、注册 PWA
-import { db, esc, settings, toast } from './lib.js';
+import { db, esc, settings, toast, LANGS, langOf } from './lib.js';
 import { listModels } from './ai.js';
 import { speak } from './tts.js';
 import { renderEditor } from './editor.js';
@@ -20,7 +20,7 @@ async function renderList() {
       <span style="flex:1"></span><button id="export">导出备份</button>
       <label class="btn">导入<input type="file" id="import" accept=".json" hidden></label></div>
     ${shown.length ? '' : tab === 'packs' ? '<div class="empty"><b>内置课程都删掉了</b>去「我的课程」看看自己的课吧。</div>' : '<div class="empty"><b>还没有自己的课程</b>点「新建课程」，传一张图，让 AI 把物品框出来；或者先去「内置课程」玩现成的。</div>'}
-    <div class="cards">${shown.map(l => `<div class="card"><a class="pic" href="#/study/${l.id}"><img src="${URL.createObjectURL(l.image)}"><span class="n">${l.items.length} 词</span></a>
+    <div class="cards">${shown.map(l => `<div class="card"><a class="pic" href="#/study/${l.id}"><img src="${URL.createObjectURL(l.image)}"><span class="n">${l.items.length} 词</span>${langOf(l) === 'en' ? '' : `<span class="n lang">${LANGS[langOf(l)].name}</span>`}</a>
       <div class="body"><b>${esc(l.title)}</b>
       <div class="bar"><a class="btn primary" href="#/study/${l.id}">开始学</a><a class="btn" href="#/edit/${l.id}">编辑</a><span style="flex:1"></span><button class="danger" data-del="${l.id}">删</button></div></div></div>`).join('')}</div>`;
   view.querySelector('#tabs').onclick = e => { const t = e.target.dataset.tab; if (t) { settings.set({ ...settings.get(), homeTab: t }); renderList(); } };
@@ -91,7 +91,7 @@ function renderSettings() {
       </div>
       <div class="panel" style="margin-top:16px">
       <h3 style="margin-top:0">发音</h3>
-      <label class="field">Edge TTS 发音人 <input id="voice" list="voices" value="${esc(s.voice)}"></label>
+      <label class="field">英语发音人（其他语种自动配）<input id="voice" list="voices" value="${esc(s.voice)}"></label>
       <datalist id="voices"><option>en-US-JennyNeural<option>en-US-GuyNeural<option>en-US-AriaNeural<option>en-GB-SoniaNeural<option>en-GB-RyanNeural<option>en-AU-NatashaNeural</datalist>
       <button id="test">🔊 试听 hello</button>
       </div>
