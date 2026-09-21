@@ -1,5 +1,5 @@
 // AI 出课页：大类 → AI 列子话题一层层往下钻 → 就画这个 / 勾选批量生成：生图 → 识别 → 存成一课
-import { db, esc, dots, toast, settings, LANGS, FOLDERS } from './lib.js';
+import { db, esc, dots, toast, settings, LANGS, FOLDERS, allFolders } from './lib.js';
 import { detect, generateImage, listTopics, shrink } from './ai.js';
 
 const cache = {}; // 路径 → 子话题，回退再进不重新问 AI
@@ -54,7 +54,8 @@ export async function renderGen(view) {
     $('#draw').innerHTML = path.length ? `<button id="drawIt" class="primary">就画「${esc(path.at(-1))}」</button>` : '';
   };
   const drawTopics = list => {
-    $('#topics').innerHTML = list.map(t => `<span class="topic"><input type="checkbox" data-pick="${esc(t)}"${picked.has(pkey(t)) ? ' checked' : ''}><button data-topic="${esc(t)}">${esc(t)}${have.has(t) ? '<span class="muted">已有</span>' : ''}</button></span>`).join('');
+    $('#topics').innerHTML = list.map(t => `<span class="topic"><input type="checkbox" data-pick="${esc(t)}"${picked.has(pkey(t)) ? ' checked' : ''}><button data-topic="${esc(t)}">${esc(t)}${have.has(t) ? '<span class="muted">已有</span>' : ''}</button>${!path.length && !FOLDERS.includes(t) ? `<button class="x" data-rm="${esc(t)}" title="删掉这个大类">×</button>` : ''}</span>`).join('')
+      + (path.length ? '' : '<button id="addFolder">＋ 添加大类</button>');
   };
   const drawBar = () => {
     $('#pickN').textContent = `已勾 ${picked.size} 个`;
@@ -64,7 +65,7 @@ export async function renderGen(view) {
   async function enter() {
     const my = ++seq;
     drawCrumbs();
-    if (!path.length) return drawTopics(FOLDERS);
+    if (!path.length) return drawTopics(allFolders());
     const key = path.join('›');
     if (!cache[key]) {
       $('#topics').innerHTML = `<span class="muted thinking">${dots('AI 在想')}</span>`;
@@ -88,6 +89,13 @@ export async function renderGen(view) {
   }
 
   view.onclick = e => {
+    if (e.target.id === 'addFolder') {
+      const name = prompt('新大类叫什么？比如：乐器 / 露营', '')?.trim();
+      if (name && !allFolders().includes(name)) settings.set({ ...settings.get(), folders: [...(settings.get().folders || []), name] });
+      return enter();
+    }
+    const rm = e.target.dataset.rm;
+    if (rm) { settings.set({ ...settings.get(), folders: (settings.get().folders || []).filter(f => f !== rm) }); picked.delete(pkey(rm)); drawBar(); return enter(); }
     const p = e.target.dataset.pick;
     if (p !== undefined) { e.target.checked ? picked.set(pkey(p), { topic: p, folder: path[0] || p }) : picked.delete(pkey(p)); return drawBar(); }
     const t = e.target.closest('[data-topic]')?.dataset.topic;

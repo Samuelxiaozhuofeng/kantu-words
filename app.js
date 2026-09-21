@@ -34,7 +34,7 @@ async function renderList() {
       `<div><b>${esc(q.item.en)}</b> ${esc(q.item.zh)} <span class="muted">${esc(q.lesson.title)}</span><button data-unwrong="${esc(q.key)}">移出</button></div>`
     ).join('')}</div>` : '<div class="empty"><b>错题本是空的</b>练完没一次答对的词会记在这里，下次一次答对就会拿掉。</div>'}`;
   view.innerHTML = `
-    <div class="bar"><a class="btn primary" href="#/edit">＋ 新建课程</a><a class="btn" href="#/gen">AI 出课</a>
+    <div class="bar"><a class="btn primary" href="#/edit">＋ 新建课程</a>
       <span class="seg" id="tabs"><button data-tab="mine" class="${tab === 'mine' ? 'on' : ''}">我的课程 ${mine.length}</button><button data-tab="packs" class="${tab === 'packs' ? 'on' : ''}">内置课程 ${packs.length}</button><button data-tab="wrong" class="${tab === 'wrong' ? 'on' : ''}">错题本 ${wrongs.length}</button></span>
       ${tab === 'packs' ? `<select id="packLang" title="内置课程用哪种语言">${Object.entries(LANGS).map(([k, L]) => `<option value="${k}" ${k === packLang ? 'selected' : ''}>${L.name}</option>`).join('')}</select>` : ''}
       <span style="flex:1"></span><button id="export">导出备份</button>

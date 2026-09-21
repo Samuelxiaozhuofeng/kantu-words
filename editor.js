@@ -1,6 +1,6 @@
 // 备课页：传图 / AI 生图 → AI 识别出框 → 手动改词、拖框、删框 → 保存
-import { db, esc, dots, toast, settings, LANGS, langOf, FOLDERS, folderOf } from './lib.js';
-import { detect, fillSents, generateImage, shrink } from './ai.js';
+import { db, esc, dots, toast, settings, LANGS, langOf, allFolders, folderOf } from './lib.js';
+import { detect, fillSents, shrink } from './ai.js';
 import { speak } from './tts.js';
 
 const pct = v => (v / 10).toFixed(2) + '%';
@@ -11,7 +11,7 @@ export async function renderEditor(view, id) {
   const lesson = (id && await db.get(id)) || { id: crypto.randomUUID(), title: '', image: null, items: [], created: Date.now(), lang: settings.get().lastLang };
   lesson.lang = langOf(lesson); // 老课没这个字段：当英语，保存时写进去
   const isPack = lesson.id.startsWith('pack-'), folder = folderOf(lesson);
-  const folders = folder && !FOLDERS.includes(folder) ? [...FOLDERS, folder] : FOLDERS; // 老数据里的名字不在表里也保留
+  const folders = [...new Set([...allFolders(), folder].filter(Boolean))]; // 老数据里的名字不在表里也保留
   let sel = -1, imgUrl = lesson.image && URL.createObjectURL(lesson.image);
   view.innerHTML = `
     <div class="bar">
@@ -109,11 +109,7 @@ export async function renderEditor(view, id) {
   };
 
   $('#file').onchange = e => e.target.files[0] && setImage(e.target.files[0]).catch(err => alert('这张图打不开：' + err.message));
-  $('#gen').onclick = async () => {
-    const p = prompt('想画什么？一个词也行，比如：客厅 / 冰箱 / 文具', '');
-    if (!p?.trim()) return;
-    await busy($('#gen'), '生图中', async () => setImage(await generateImage(p.trim())));
-  };
+  $('#gen').onclick = () => location.hash = '#/gen'; // AI 生图统一走选题页：选大类 / 子话题或自己输入，生成的是新课
   $('#detect').onclick = async () => {
     if (!lesson.image) return toast('先放一张图');
     if (lesson.items.length && !confirm('会替换现有的框，继续？')) return;
