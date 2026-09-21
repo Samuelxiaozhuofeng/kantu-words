@@ -1,37 +1,53 @@
 // 入口：hash 路由、课程列表、设置页、导入导出、注册 PWA
-import { db, esc, settings, toast, LANGS, langOf, wrongEntries } from './lib.js';
+import { db, esc, settings, toast, LANGS, langOf, folderOf, wrongEntries } from './lib.js';
 import { listModels } from './ai.js';
 import { speak } from './tts.js';
 import { renderEditor } from './editor.js';
 import { renderStudy } from './study.js';
+import { renderGen, queue, retryFailed, clearQueue } from './gen.js';
 import { PRESETS, pingAnki, listDecks, exportWrong } from './anki.js';
 
 const view = document.getElementById('view');
 
 const isPack = l => l.id.startsWith('pack-'); // 内置课按编号认，改过名、改过词还算内置
+const UNGROUPED = '未分组';
+let curFolder = ''; // 「我的课程」当前选中的文件夹标签，空串 = 全部；只记在内存里
 async function renderList() {
   const lessons = (await db.all()).sort((a, b) => b.created - a.created);
   const mine = lessons.filter(l => !isPack(l)), packs = lessons.filter(isPack);
   // 没手动切过标签时：自己有课就看自己的，没有就看内置的，别让新用户开门见空页
   const tab = settings.get().homeTab || (mine.length ? 'mine' : 'packs');
-  const shown = tab === 'packs' ? packs : mine, packLang = settings.get().packLang || 'en';
+  // 文件夹标签：只列实际有课的，没分组的课归「未分组」排最后；一个都没分组时整排不显示
+  const folders = [...new Set(mine.map(folderOf).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh'));
+  if (mine.some(l => !folderOf(l))) folders.push(UNGROUPED);
+  if (!folders.includes(curFolder)) curFolder = '';
+  const inFolder = l => !curFolder || (folderOf(l) || UNGROUPED) === curFolder;
+  const shown = tab === 'packs' ? packs : mine.filter(inFolder), packLang = settings.get().packLang || 'en';
   const wrongs = wrongEntries(lessons, settings.get().wrong);
+  const by = st => queue.filter(j => j.state === st), names = st => by(st).map(j => esc(j.topic)).join('、');
+  const genBar = !queue.length ? '' : `<div class="bar genprog"><span>AI 出课：完成 ${by('done').length} / ${queue.length}${by('run').length ? ` · 生成中 ${by('run').length}：${names('run')}` : ''}${by('wait').length ? ` · 排队 ${by('wait').length}` : ''}${by('fail').length ? ` · 失败 ${by('fail').length}` : ''}</span>
+    ${by('fail').map(j => `<span class="muted">${esc(j.topic)}：${esc(j.error.slice(0, 60))}</span>`).join('')}
+    ${by('fail').length ? '<button id="genRetry">重试失败的</button>' : ''}${by('run').length + by('wait').length ? '' : '<button id="genClear">清除记录</button>'}</div>`;
   const wrongPanel = `
     <div class="bar">${wrongs.length ? `<a class="btn primary" href="#/study/wrong">练习错题本</a><button id="exportAnki">导出到 Anki</button><label class="chk"><input type="checkbox" id="ankiClear"${settings.get().ankiClear ? ' checked' : ''}> 导出后清空错题本</label>` : ''}<button id="clearWrong">清空错题本</button></div>
     ${wrongs.length ? `<div class="words wrongs">${wrongs.map(q =>
       `<div><b>${esc(q.item.en)}</b> ${esc(q.item.zh)} <span class="muted">${esc(q.lesson.title)}</span><button data-unwrong="${esc(q.key)}">移出</button></div>`
     ).join('')}</div>` : '<div class="empty"><b>错题本是空的</b>练完没一次答对的词会记在这里，下次一次答对就会拿掉。</div>'}`;
   view.innerHTML = `
-    <div class="bar"><a class="btn primary" href="#/edit">＋ 新建课程</a>
+    <div class="bar"><a class="btn primary" href="#/edit">＋ 新建课程</a><a class="btn" href="#/gen">AI 出课</a>
       <span class="seg" id="tabs"><button data-tab="mine" class="${tab === 'mine' ? 'on' : ''}">我的课程 ${mine.length}</button><button data-tab="packs" class="${tab === 'packs' ? 'on' : ''}">内置课程 ${packs.length}</button><button data-tab="wrong" class="${tab === 'wrong' ? 'on' : ''}">错题本 ${wrongs.length}</button></span>
       ${tab === 'packs' ? `<select id="packLang" title="内置课程用哪种语言">${Object.entries(LANGS).map(([k, L]) => `<option value="${k}" ${k === packLang ? 'selected' : ''}>${L.name}</option>`).join('')}</select>` : ''}
       <span style="flex:1"></span><button id="export">导出备份</button>
       <label class="btn">导入<input type="file" id="import" accept=".json" hidden></label></div>
+    ${tab === 'mine' ? genBar : ''}
+    ${tab === 'mine' && folders.length && folders[0] !== UNGROUPED ? `<div class="bar"><span class="seg" id="folders"><button data-folder="" class="${curFolder ? '' : 'on'}">全部</button>${folders.map(f => `<button data-folder="${esc(f)}" class="${f === curFolder ? 'on' : ''}">${esc(f)}</button>`).join('')}</span></div>` : ''}
     ${tab === 'wrong' ? wrongPanel : shown.length ? '' : tab === 'packs' ? '<div class="empty"><b>内置课程都删掉了</b>去「我的课程」看看自己的课吧。</div>' : '<div class="empty"><b>还没有自己的课程</b>点「新建课程」，传一张图，让 AI 把物品框出来；或者先去「内置课程」玩现成的。</div>'}
-    ${tab === 'wrong' ? '' : `<div class="cards">${shown.map(l => `<div class="card"><a class="pic" href="#/study/${l.id}"><img src="${URL.createObjectURL(l.image)}"><span class="n">${l.items.length} 词</span>${langOf(l) === 'en' ? '' : `<span class="n lang">${LANGS[langOf(l)].name}</span>`}</a>
+    ${tab === 'wrong' ? '' : `<div class="cards">${shown.map(l => `<div class="card"><a class="pic" href="#/study/${l.id}"><img src="${URL.createObjectURL(l.image)}"><span class="n">${l.items.length ? l.items.length + ' 词' : '待整理'}</span>${langOf(l) === 'en' ? '' : `<span class="n lang">${LANGS[langOf(l)].name}</span>`}</a>
       <div class="body"><b>${esc(l.title)}</b>
       <div class="bar"><a class="btn primary" href="#/study/${l.id}">开始学</a><a class="btn" href="#/edit/${l.id}">编辑</a><span style="flex:1"></span><button class="danger" data-del="${l.id}">删</button></div></div></div>`).join('')}</div>`}`;
   view.querySelector('#tabs').onclick = e => { const t = e.target.dataset.tab; if (t) { settings.set({ ...settings.get(), homeTab: t }); renderList(); } };
+  const fl = view.querySelector('#folders');
+  if (fl) fl.onclick = e => { const f = e.target.dataset.folder; if (f !== undefined) { curFolder = f; renderList(); } };
   const sel = view.querySelector('#packLang');
   if (sel) sel.onchange = async () => {
     if (!confirm(`把 ${packs.length} 课内置课程换成${LANGS[sel.value].name}版？你在内置课上改过的词会被换掉。`)) { sel.value = packLang; return; }
@@ -39,6 +55,8 @@ async function renderList() {
     catch (e) { alert('没换成，检查一下网络：' + e.message); sel.value = packLang; }
   };
   view.onclick = async e => {
+    if (e.target.id === 'genRetry') return retryFailed();
+    if (e.target.id === 'genClear') return clearQueue();
     if (e.target.id === 'exportAnki') {
       try { if (await exportWrong(wrongs)) renderList(); }
       catch (err) { alert('导出失败：' + err.message); }
@@ -152,6 +170,7 @@ function renderSettings() {
       <div class="bar"><button id="fetchImg">拉取生图模型列表</button> <span class="muted" id="fetchedImg"></span></div>
       <datalist id="imgModels"></datalist>
       <label class="field">生图模型 <input id="imageModel" list="imgModels" value="${esc(s.imageModel)}"></label>
+      <label class="field">同时生成几张图（AI 出课批量时）<input id="genParallel" type="number" min="1" max="8" value="${s.genParallel || 3}"></label>
       </div>
       <div class="panel" style="margin-top:16px">
       <h3 style="margin-top:0">发音</h3>
@@ -183,6 +202,7 @@ function renderSettings() {
     ...Object.fromEntries(['apiUrl', 'apiKey', 'visionModel', 'imageApiUrl', 'imageApiKey', 'imageModel', 'voice'].map(k => [k, $('#' + k).value.trim()])),
     ankiDeck: $('#ankiNew').value.trim() || $('#ankiDeck').value || s.ankiDeck || '',
     ankiPreset: $('#ankiPreset').value || 'pic',
+    genParallel: (n => Number.isInteger(n) && n >= 1 && n <= 8 ? n : 3)(+$('#genParallel').value),
   });
   const connectAnki = async () => {
     $('#ankiStatus').textContent = '正在连接…';
@@ -240,12 +260,14 @@ function route() {
   if (page === 'edit') renderEditor(view, id);
   else if (page === 'study') renderStudy(view, id);
   else if (page === 'settings') renderSettings();
+  else if (page === 'gen') renderGen(view);
   else {
     renderList();
     addPacks().then(k => { if (k) { toast(`已放入 ${k} 课内置课程，不填 Key 也能玩`); if (cur === location.hash) renderList(); } }).then(fillPackSents).catch(e => console.warn('内置课程没拿到，下次再试', e));
   }
 }
 addEventListener('hashchange', route);
+addEventListener('kantu:gen', () => { if (location.hash === '#/' || !location.hash) renderList(); }); // 批量出课进度变了，在首页就重画
 addEventListener('beforeunload', e => { if (view.dirty) e.preventDefault(); });
 route();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');

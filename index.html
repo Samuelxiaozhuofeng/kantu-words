@@ -89,6 +89,18 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;paddi
 .choices button.ok{background:var(--ok);border-color:var(--ok);color:#fff}
 .choices button.bad{border-color:var(--bad);color:var(--bad);opacity:.6}
 
+/* AI 出课页 */
+.crumbs{display:flex;align-items:center;gap:6px;font-weight:700;color:var(--dim)}
+.crumbs button{border:none;background:none;padding:4px 6px;color:var(--mark)}
+.crumbs button:last-child{color:var(--ink);cursor:default}
+.topics{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px}
+.topics button{font-size:17px;padding:12px 20px}
+.topics button .muted{font-size:12px;font-weight:600}
+.topic{display:inline-flex;align-items:center;gap:6px}
+.topic input{width:18px;height:18px;margin:0;flex:none}
+.genbar{position:sticky;bottom:0;background:#fff;border-top:1.5px solid var(--line);padding:10px 0;margin:0}
+.genprog{flex-direction:column;align-items:flex-start;gap:4px;border:1.5px solid var(--line);border-radius:12px;padding:10px 14px}
+
 /* 备课页 */
 .form{padding-bottom:14px;margin-bottom:14px;border-bottom:1.5px dashed var(--line)}
 .form .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}

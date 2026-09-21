@@ -82,6 +82,19 @@ Words: ${JSON.stringify(items.map(i => ({ en: i.en, zh: i.zh || '' })))}` }],
   return parseArr(j.choices[0].message.content);
 }
 
+// 「AI 出课」列子话题：给面包屑路径，回 6–10 个更细一层、能画成认物图的中文名
+export async function listTopics(path) {
+  const s = cfg();
+  if (!s.visionModel) throw new Error('请先在「设置」里选识别模型');
+  const j = await call('/chat/completions', {
+    model: s.visionModel, max_tokens: 2000,
+    messages: [{ role: 'user', content: `这是一个看图认物的单词学习应用。给定分类路径「${path.join(' › ')}」，列出 6 到 10 个比它更细一层的具体场景 / 地点 / 物品集合的中文名。
+要求：每一个都必须能画成一张含 8 到 14 个可以分开命名的物品的认物图；不要动作、不要抽象概念、不要跟路径里的名字相同。
+只返回 JSON 字符串数组，不要别的。` }],
+  });
+  return parseArr(j.choices[0].message.content).filter(t => typeof t === 'string' && t.trim()).map(t => t.trim());
+}
+
 // 用户只给主题（一个词或一段话，中文也行），后面固定接「这图是拿来看图认物的」+ 规矩：每种物品只出现一次、分开摆、不要文字、不要人
 const scene = topic => `Create a picture for a vocabulary-learning app: learners look at the picture and name the objects in it.
 Scene / topic: ${topic}

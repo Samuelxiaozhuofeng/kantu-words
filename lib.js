@@ -41,6 +41,9 @@ export const LANGS = {
   es: { name: '西班牙语', voice: 'es-ES-ElviraNeural', tag: 'es-ES', ai: 'Spanish', ipa: 'IPA', ipaName: '音标', articles: /^(el|la|los|las|un|una)\s+/ },
 };
 export const langOf = lesson => LANGS[lesson?.lang] ? lesson.lang : 'en'; // 老课、内置课、旧备份没这个字段，一律英语
+// 课程文件夹：「AI 出课」的大类，也是编辑页下拉的选项；folder 缺省 / 空串当未分组，不按这张表校验（老数据改名不丢）
+export const FOLDERS = ['家居', '厨房', '衣物', '食物', '交通', '学校', '办公', '动物', '自然', '运动', '医疗', '城市'];
+export const folderOf = lesson => typeof lesson?.folder === 'string' && lesson.folder ? lesson.folder : '';
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export function toast(msg, ms = 2500) {
   document.querySelectorAll('.toast').forEach(d => d.remove()); // 新的顶掉旧的，连着报进度时不会叠成一摞

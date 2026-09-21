@@ -1,5 +1,5 @@
 // 备课页：传图 / AI 生图 → AI 识别出框 → 手动改词、拖框、删框 → 保存
-import { db, esc, toast, settings, LANGS, langOf } from './lib.js';
+import { db, esc, toast, settings, LANGS, langOf, FOLDERS, folderOf } from './lib.js';
 import { detect, fillSents, generateImage, shrink } from './ai.js';
 import { speak } from './tts.js';
 
@@ -10,11 +10,14 @@ export const boxStyle = ([y1, x1, y2, x2]) => `left:${pct(x1)};top:${pct(y1)};wi
 export async function renderEditor(view, id) {
   const lesson = (id && await db.get(id)) || { id: crypto.randomUUID(), title: '', image: null, items: [], created: Date.now(), lang: settings.get().lastLang };
   lesson.lang = langOf(lesson); // 老课没这个字段：当英语，保存时写进去
+  const isPack = lesson.id.startsWith('pack-'), folder = folderOf(lesson);
+  const folders = folder && !FOLDERS.includes(folder) ? [...FOLDERS, folder] : FOLDERS; // 老数据里的名字不在表里也保留
   let sel = -1, imgUrl = lesson.image && URL.createObjectURL(lesson.image);
   view.innerHTML = `
     <div class="bar">
       <input id="title" placeholder="课程标题，比如：衣柜" value="${esc(lesson.title)}">
       <select id="lang" title="这课学哪种语言">${Object.entries(LANGS).map(([k, L]) => `<option value="${k}" ${k === lesson.lang ? 'selected' : ''}>${L.name}</option>`).join('')}</select>
+      ${isPack ? '' : `<select id="folder" title="放进哪个文件夹"><option value="">未分组</option>${folders.map(f => `<option ${f === folder ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select>`}
       <label class="btn">上传图片<input type="file" id="file" accept="image/*" hidden></label>
       <button id="gen">AI 生图</button>
       <button id="detect">AI 识别</button>
@@ -151,6 +154,7 @@ export async function renderEditor(view, id) {
   $('#title').oninput = touch;
   // 换语种：发音立刻跟着变，词表要再点「AI 识别」才换；记住上次选的，常学一种语言就不用每次点
   $('#lang').onchange = e => { lesson.lang = e.target.value; settings.set({ ...settings.get(), lastLang: lesson.lang }); touch(); drawPanel(); };
+  if (!isPack) $('#folder').onchange = e => { lesson.folder = e.target.value; touch(); };
   drawStage(); drawPanel();
 }
 
