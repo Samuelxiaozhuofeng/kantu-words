@@ -44,6 +44,7 @@ export const langOf = lesson => LANGS[lesson?.lang] ? lesson.lang : 'en'; // 老
 // 课程文件夹：「AI 出课」的大类，也是编辑页下拉的选项；folder 缺省 / 空串当未分组，不按这张表校验（老数据改名不丢）
 export const FOLDERS = ['家居', '厨房', '衣物', '食物', '交通', '学校', '办公', '动物', '自然', '运动', '医疗', '城市'];
 export const folderOf = lesson => typeof lesson?.folder === 'string' && lesson.folder ? lesson.folder : '';
+export const dots = s => `${s}<span class="dots"><i>.</i><i>.</i><i>.</i></span>`; // 「生图中」+ 三个轮流闪的点，等 AI 的地方都用它
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export function toast(msg, ms = 2500) {
   document.querySelectorAll('.toast').forEach(d => d.remove()); // 新的顶掉旧的，连着报进度时不会叠成一摞

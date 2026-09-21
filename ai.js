@@ -100,7 +100,8 @@ const scene = topic => `Create a picture for a vocabulary-learning app: learners
 Scene / topic: ${topic}
 Rules:
 - Include 8 to 14 everyday objects that fit the scene, each one a distinct kind of thing a learner should be able to name.
-- Each kind of object appears EXACTLY ONCE. No duplicates: one book (not a shelf of books), one plant, one rug, one cup.
+- Each kind of object appears EXACTLY ONCE: no shelves, rows or piles of the same thing.
+- Every object must belong to this specific scene / topic; do not pad the picture with unrelated generic decor.
 - Objects are clearly separated from each other, fully visible, not overlapping, not stacked or piled; no object is tiny.
 - Absolutely NO text, letters, numbers, logos, posters with words, labels or signs anywhere in the picture.
 - No people, no hands, no faces.

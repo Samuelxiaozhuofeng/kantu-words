@@ -1,5 +1,5 @@
 // 备课页：传图 / AI 生图 → AI 识别出框 → 手动改词、拖框、删框 → 保存
-import { db, esc, toast, settings, LANGS, langOf, FOLDERS, folderOf } from './lib.js';
+import { db, esc, dots, toast, settings, LANGS, langOf, FOLDERS, folderOf } from './lib.js';
 import { detect, fillSents, generateImage, shrink } from './ai.js';
 import { speak } from './tts.js';
 
@@ -112,17 +112,17 @@ export async function renderEditor(view, id) {
   $('#gen').onclick = async () => {
     const p = prompt('想画什么？一个词也行，比如：客厅 / 冰箱 / 文具', '');
     if (!p?.trim()) return;
-    await busy($('#gen'), '生图中…', async () => setImage(await generateImage(p.trim())));
+    await busy($('#gen'), '生图中', async () => setImage(await generateImage(p.trim())));
   };
   $('#detect').onclick = async () => {
     if (!lesson.image) return toast('先放一张图');
     if (lesson.items.length && !confirm('会替换现有的框，继续？')) return;
-    await busy($('#detect'), '识别中…', async () => { lesson.items = await detect(lesson.image, lesson.lang, $('#withSent').checked); sel = -1; touch(); drawStage(); drawPanel(); toast(`识别出 ${lesson.items.length} 个物品`); });
+    await busy($('#detect'), '识别中', async () => { lesson.items = await detect(lesson.image, lesson.lang, $('#withSent').checked); sel = -1; touch(); drawStage(); drawPanel(); toast(`识别出 ${lesson.items.length} 个物品`); });
   };
   $('#withSent').onchange = e => settings.set({ ...settings.get(), withSent: e.target.checked });
   $('#fill').onclick = async () => {
     if (!lesson.items.length) return toast('先识别或加几个词');
-    await busy($('#fill'), '补例句中…', async () => {
+    await busy($('#fill'), '补例句中', async () => {
       const arr = await fillSents(lesson.items, lesson.lang);
       const norm = s => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
       const by = new Map();
@@ -159,6 +159,6 @@ export async function renderEditor(view, id) {
 }
 
 async function busy(btn, label, fn) {
-  const old = btn.textContent; btn.disabled = true; btn.textContent = label;
+  const old = btn.textContent; btn.disabled = true; btn.innerHTML = dots(label);
   try { await fn(); } catch (e) { alert(e.message); } finally { btn.disabled = false; btn.textContent = old; }
 }

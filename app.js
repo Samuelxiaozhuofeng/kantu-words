@@ -1,5 +1,5 @@
 // 入口：hash 路由、课程列表、设置页、导入导出、注册 PWA
-import { db, esc, settings, toast, LANGS, langOf, folderOf, wrongEntries } from './lib.js';
+import { db, esc, dots, settings, toast, LANGS, langOf, folderOf, wrongEntries } from './lib.js';
 import { listModels } from './ai.js';
 import { speak } from './tts.js';
 import { renderEditor } from './editor.js';
@@ -25,7 +25,7 @@ async function renderList() {
   const shown = tab === 'packs' ? packs : mine.filter(inFolder), packLang = settings.get().packLang || 'en';
   const wrongs = wrongEntries(lessons, settings.get().wrong);
   const by = st => queue.filter(j => j.state === st), names = st => by(st).map(j => esc(j.topic)).join('、');
-  const genBar = !queue.length ? '' : `<div class="bar genprog"><span>AI 出课：完成 ${by('done').length} / ${queue.length}${by('run').length ? ` · 生成中 ${by('run').length}：${names('run')}` : ''}${by('wait').length ? ` · 排队 ${by('wait').length}` : ''}${by('fail').length ? ` · 失败 ${by('fail').length}` : ''}</span>
+  const genBar = !queue.length ? '' : `<div class="bar genprog"><span>AI 出课：完成 ${by('done').length} / ${queue.length}${by('run').length ? ` · 生成中 ${by('run').length}：${dots(names('run'))}` : ''}${by('wait').length ? ` · 排队 ${by('wait').length}` : ''}${by('fail').length ? ` · 失败 ${by('fail').length}` : ''}</span>
     ${by('fail').map(j => `<span class="muted">${esc(j.topic)}：${esc(j.error.slice(0, 60))}</span>`).join('')}
     ${by('fail').length ? '<button id="genRetry">重试失败的</button>' : ''}${by('run').length + by('wait').length ? '' : '<button id="genClear">清除记录</button>'}</div>`;
   const wrongPanel = `

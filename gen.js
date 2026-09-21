@@ -1,14 +1,14 @@
 // AI 出课页：大类 → AI 列子话题一层层往下钻 → 就画这个 / 勾选批量生成：生图 → 识别 → 存成一课
-import { db, esc, toast, settings, LANGS, FOLDERS } from './lib.js';
+import { db, esc, dots, toast, settings, LANGS, FOLDERS } from './lib.js';
 import { detect, generateImage, listTopics, shrink } from './ai.js';
 
 const cache = {}; // 路径 → 子话题，回退再进不重新问 AI
 
 // 画一张 → 识词 → 存课；批量生成也走这条
 export async function makeLesson(topic, folder, lang, onStep = () => {}) {
-  onStep('生图中…');
+  onStep('生图中');
   const image = await shrink(await generateImage(topic));
-  onStep('识别中…');
+  onStep('识别中');
   const items = await detect(image, lang, settings.get().withSent);
   const lesson = { id: crypto.randomUUID(), title: topic, folder, lang, image, items, created: Date.now() };
   await db.put(lesson);
@@ -67,7 +67,7 @@ export async function renderGen(view) {
     if (!path.length) return drawTopics(FOLDERS);
     const key = path.join('›');
     if (!cache[key]) {
-      $('#topics').innerHTML = '<span class="muted thinking">AI 在想<i>.</i><i>.</i><i>.</i></span>';
+      $('#topics').innerHTML = `<span class="muted thinking">${dots('AI 在想')}</span>`;
       try {
         const list = await listTopics(path);
         if (!list.length) throw new Error('AI 没想出子话题，换一个试试'); // 空结果不进缓存，下次还能重问
@@ -81,7 +81,7 @@ export async function renderGen(view) {
     const old = btn.textContent;
     btn.disabled = true;
     try {
-      const l = await makeLesson(topic, path[0] || '', lang, s => btn.textContent = s);
+      const l = await makeLesson(topic, path[0] || '', lang, s => btn.innerHTML = dots(s));
       toast(`「${l.title}」已生成，${l.items.length} 个词`);
       if (location.hash === '#/gen') location.hash = '#/'; // 用户已经去别处了就别把人拽回首页
     } catch (e) { alert(e.message); btn.disabled = false; btn.textContent = old; }
