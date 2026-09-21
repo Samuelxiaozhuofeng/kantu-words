@@ -1,6 +1,6 @@
 // 备课页：传图 / AI 生图 → AI 识别出框 → 手动改词、拖框、删框 → 保存
 import { db, esc, toast } from './lib.js';
-import { detect, generateImage } from './ai.js';
+import { detect, generateImage, shrink } from './ai.js';
 import { speak } from './tts.js';
 
 const pct = v => (v / 10).toFixed(2) + '%';
@@ -9,54 +9,72 @@ export const boxStyle = ([y1, x1, y2, x2]) => `left:${pct(x1)};top:${pct(y1)};wi
 
 export async function renderEditor(view, id) {
   const lesson = (id && await db.get(id)) || { id: crypto.randomUUID(), title: '', image: null, items: [], created: Date.now() };
-  let sel = -1;
+  let sel = -1, imgUrl = lesson.image && URL.createObjectURL(lesson.image);
   view.innerHTML = `
     <div class="bar">
       <input id="title" placeholder="课程标题，比如：衣柜" value="${esc(lesson.title)}">
       <label class="btn">上传图片<input type="file" id="file" accept="image/*" hidden></label>
       <button id="gen">AI 生图</button>
       <button id="detect">AI 识别</button>
-      <button id="add">手动加框</button>
+      <button id="add">＋ 手动加框</button>
       <button id="save" class="primary">保存</button>
     </div>
     <div class="two">
-      <div class="stage" id="stage"><p class="muted" style="padding:40px;text-align:center">先上传一张图，或让 AI 生成一张</p></div>
-      <div id="panel"></div>
+      <div class="stage" id="stage"></div>
+      <div class="panel" id="panel"></div>
     </div>`;
   const $ = s => view.querySelector(s);
   const stage = $('#stage');
+  const touch = () => view.dirty = true; // 有没保存的改动，离开时 app.js 会拦一下
 
   function drawStage() {
-    if (!lesson.image) return;
-    stage.innerHTML = `<img src="${URL.createObjectURL(lesson.image)}">` +
+    if (!lesson.image) {
+      stage.innerHTML = `<div class="placeholder"><b>先来一张图</b><span>拍一张衣柜、书桌、冰箱……或者让 AI 画一张</span>
+        <div class="bar"><label class="btn primary">上传图片<input type="file" class="file" accept="image/*" hidden></label><button class="gen2">AI 生图</button></div></div>`;
+      stage.querySelector('.file').onchange = $('#file').onchange;
+      stage.querySelector('.gen2').onclick = () => $('#gen').click();
+      return;
+    }
+    stage.innerHTML = `<img src="${imgUrl}">` +
       lesson.items.map((it, i) => `<div class="box ${i === sel ? 'sel' : ''}" data-i="${i}" style="${boxStyle(it.box)}"><span class="tag">${esc(it.en)}</span></div>`).join('');
   }
   function drawPanel() {
     const it = lesson.items[sel];
     $('#panel').innerHTML = `
-      <p class="muted">${lesson.items.length} 个词 · 点框或列表选中，拖框可移动</p>
-      <div class="list">${lesson.items.map((x, i) => `<div class="${i === sel ? 'sel' : ''}" data-i="${i}">${esc(x.en)} <span class="muted">${esc(x.zh)}</span></div>`).join('')}</div>
-      ${it ? `
+      <div class="hintbar"><b>${lesson.items.length} 个词</b><span class="muted">${it ? '拖框移动 · 方向键微调 · Delete 删' : lesson.items.length ? '点框或点词来编辑' : '点「AI 识别」自动框出物品'}</span></div>
+      ${it ? `<div class="form">
       <label class="field">英文 <input id="f-en" value="${esc(it.en)}"></label>
       <label class="field">中文 <input id="f-zh" value="${esc(it.zh)}"></label>
-      <label class="field">音标 <input id="f-ipa" value="${esc(it.ipa)}"></label>
-      <label class="field">词性 <input id="f-pos" value="${esc(it.pos)}"></label>
+      <div class="row"><label class="field">音标 <input id="f-ipa" value="${esc(it.ipa)}"></label><label class="field">词性 <input id="f-pos" value="${esc(it.pos)}"></label></div>
       <label class="field">也算对（逗号分隔）<input id="f-alts" value="${esc(it.alts.join(', '))}"></label>
-      <div class="bar"><button id="say">🔊 试听</button><button id="del" class="danger">删除这个框</button></div>` : ''}`;
+      <div class="bar"><button id="say">🔊 试听</button><button id="del" class="danger">删除这个框</button></div></div>` : ''}
+      <div class="words">${lesson.items.map((x, i) => `<div class="${i === sel ? 'sel' : ''}" data-i="${i}"><b>${esc(x.en)}</b><span class="muted">${esc(x.zh)}</span></div>`).join('')}</div>`;
+    $('.words .sel')?.scrollIntoView({ block: 'nearest' });
     if (!it) return;
-    for (const k of ['en', 'zh', 'ipa', 'pos']) $('#f-' + k).oninput = e => { it[k] = e.target.value; if (k === 'en') drawStage(); };
-    $('#f-alts').oninput = e => it.alts = e.target.value.split(/[,，]/).map(s => s.trim()).filter(Boolean);
+    for (const k of ['en', 'zh', 'ipa', 'pos']) $('#f-' + k).oninput = e => { it[k] = e.target.value; touch(); if (k === 'en') drawStage(); };
+    $('#f-alts').oninput = e => { it.alts = e.target.value.split(/[,，]/).map(s => s.trim()).filter(Boolean); touch(); };
     $('#say').onclick = () => speak(it.en);
-    $('#del').onclick = () => { lesson.items.splice(sel, 1); sel = -1; drawStage(); drawPanel(); };
+    $('#del').onclick = removeSel;
   }
   const select = i => { sel = i; drawStage(); drawPanel(); };
-  const setImage = blob => { lesson.image = blob; lesson.items = []; sel = -1; drawStage(); drawPanel(); };
+  const removeSel = () => { if (sel < 0) return; lesson.items.splice(sel, 1); sel = -1; touch(); drawStage(); drawPanel(); };
+  const setImage = async blob => {
+    lesson.image = await shrink(blob); lesson.items = []; sel = -1; touch();
+    imgUrl = URL.createObjectURL(lesson.image); drawStage(); drawPanel();
+  };
+  const moveBox = (i, dx, dy) => {
+    const [y1, x1, y2, x2] = lesson.items[i].box, bh = y2 - y1, bw = x2 - x1;
+    const ny = Math.max(0, Math.min(1000 - bh, y1 + dy)), nx = Math.max(0, Math.min(1000 - bw, x1 + dx));
+    lesson.items[i].box = [ny, nx, ny + bh, nx + bw];
+    stage.querySelector(`.box[data-i="${i}"]`).style.cssText = boxStyle(lesson.items[i].box);
+    touch();
+  };
 
   // 选中 + 拖动（只移动，不缩放）
   let drag = null;
   stage.onpointerdown = e => {
     const b = e.target.closest('.box');
-    if (!b) return select(-1);
+    if (!b) return lesson.image && select(-1);
     const i = +b.dataset.i;
     if (i !== sel) select(i);
     const r = stage.getBoundingClientRect();
@@ -65,16 +83,22 @@ export async function renderEditor(view, id) {
   };
   stage.onpointermove = e => {
     if (!drag) return;
-    const dx = (e.clientX - drag.x) / drag.w * 1000, dy = (e.clientY - drag.y) / drag.h * 1000;
-    const [y1, x1, y2, x2] = drag.box, bh = y2 - y1, bw = x2 - x1;
-    const ny = Math.max(0, Math.min(1000 - bh, y1 + dy)), nx = Math.max(0, Math.min(1000 - bw, x1 + dx));
-    lesson.items[drag.i].box = [ny, nx, ny + bh, nx + bw];
-    stage.querySelector(`.box[data-i="${drag.i}"]`).style.cssText = boxStyle(lesson.items[drag.i].box);
+    lesson.items[drag.i].box = [...drag.box];
+    moveBox(drag.i, (e.clientX - drag.x) / drag.w * 1000, (e.clientY - drag.y) / drag.h * 1000);
   };
   stage.onpointerup = () => drag = null;
-  $('#panel').onclick = e => { const d = e.target.closest('.list div'); if (d) select(+d.dataset.i); };
+  $('#panel').onclick = e => { const d = e.target.closest('.words div'); if (d) select(+d.dataset.i); };
+  view.onkeydown = e => {
+    if (sel < 0 || e.target.matches('input')) return;
+    const step = e.shiftKey ? 20 : 4;
+    const d = { ArrowUp: [0, -step], ArrowDown: [0, step], ArrowLeft: [-step, 0], ArrowRight: [step, 0] }[e.key];
+    if (d) moveBox(sel, ...d);
+    else if (e.key === 'Delete' || e.key === 'Backspace') removeSel();
+    else return;
+    e.preventDefault();
+  };
 
-  $('#file').onchange = e => e.target.files[0] && setImage(e.target.files[0]);
+  $('#file').onchange = e => e.target.files[0] && setImage(e.target.files[0]).catch(err => alert('这张图打不开：' + err.message));
   $('#gen').onclick = async () => {
     const p = prompt('描述想要的图（英文更准）：', 'A tidy children\'s bedroom with a bed, desk, lamp, bookshelf, toys and a window, flat illustration style');
     if (!p) return;
@@ -83,20 +107,23 @@ export async function renderEditor(view, id) {
   $('#detect').onclick = async () => {
     if (!lesson.image) return toast('先放一张图');
     if (lesson.items.length && !confirm('会替换现有的框，继续？')) return;
-    await busy($('#detect'), '识别中…', async () => { lesson.items = await detect(lesson.image); sel = -1; drawStage(); drawPanel(); toast(`识别出 ${lesson.items.length} 个物品`); });
+    await busy($('#detect'), '识别中…', async () => { lesson.items = await detect(lesson.image); sel = -1; touch(); drawStage(); drawPanel(); toast(`识别出 ${lesson.items.length} 个物品`); });
   };
   $('#add').onclick = () => {
     if (!lesson.image) return toast('先放一张图');
     lesson.items.push({ en: 'new', zh: '', ipa: '', pos: '', alts: [], box: [400, 400, 600, 600] });
-    select(lesson.items.length - 1);
+    touch(); select(lesson.items.length - 1);
+    $('#f-en').select();
   };
   $('#save').onclick = async () => {
     if (!lesson.image) return toast('还没有图');
     lesson.title = $('#title').value.trim() || '未命名';
     await db.put(lesson);
+    view.dirty = false;
     toast('已保存');
     location.hash = '#/';
   };
+  $('#title').oninput = touch;
   drawStage(); drawPanel();
 }
 

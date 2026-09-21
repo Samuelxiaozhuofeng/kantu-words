@@ -10,12 +10,12 @@ const view = document.getElementById('view');
 async function renderList() {
   const lessons = (await db.all()).sort((a, b) => b.created - a.created);
   view.innerHTML = `
-    <div class="bar"><a class="btn primary" href="#/edit" style="background:var(--acc)">＋ 新建课程</a><button id="export">导出全部</button>
+    <div class="bar"><a class="btn primary" href="#/edit">＋ 新建课程</a><span style="flex:1"></span><button id="export">导出备份</button>
       <label class="btn">导入<input type="file" id="import" accept=".json" hidden></label></div>
-    ${lessons.length ? '' : '<p class="muted">还没有课程。点「新建课程」，传一张图，让 AI 把物品框出来。</p>'}
-    <div class="cards">${lessons.map(l => `<div class="card"><img src="${URL.createObjectURL(l.image)}">
-      <div class="body"><b>${esc(l.title)}</b> <span class="muted">${l.items.length} 个词</span>
-      <div class="bar"><a class="btn primary" href="#/study/${l.id}">开始学</a><a class="btn" href="#/edit/${l.id}">编辑</a><button class="danger" data-del="${l.id}">删</button></div></div></div>`).join('')}</div>`;
+    ${lessons.length ? '' : '<div class="empty"><b>还没有课程</b>点「新建课程」，传一张图，让 AI 把物品框出来。</div>'}
+    <div class="cards">${lessons.map(l => `<div class="card"><a class="pic" href="#/study/${l.id}"><img src="${URL.createObjectURL(l.image)}"><span class="n">${l.items.length} 词</span></a>
+      <div class="body"><b>${esc(l.title)}</b>
+      <div class="bar"><a class="btn primary" href="#/study/${l.id}">开始学</a><a class="btn" href="#/edit/${l.id}">编辑</a><span style="flex:1"></span><button class="danger" data-del="${l.id}">删</button></div></div></div>`).join('')}</div>`;
   view.onclick = async e => {
     const id = e.target.dataset.del;
     if (id && confirm('删除这一课？')) { await db.del(id); renderList(); }
@@ -27,8 +27,13 @@ async function renderList() {
   view.querySelector('#import').onchange = async e => {
     try {
       const arr = JSON.parse(await e.target.files[0].text());
-      for (const l of arr) await db.put({ ...l, image: await (await fetch(l.image)).blob() });
-      toast(`导入 ${arr.length} 课`); renderList();
+      // 缺字段的记录跳过并补齐默认值，不然一条坏数据会把整个列表页搞挂
+      const ok = arr.filter(l => l && l.id && typeof l.image === 'string' && Array.isArray(l.items));
+      for (const l of ok) await db.put({
+        title: '未命名', created: Date.now(), ...l, image: await (await fetch(l.image)).blob(),
+        items: l.items.filter(i => i && i.en && Array.isArray(i.box) && i.box.length === 4).map(i => ({ zh: '', ipa: '', pos: '', alts: [], ...i })),
+      });
+      toast(`导入 ${ok.length} 课` + (ok.length < arr.length ? `，跳过 ${arr.length - ok.length} 条坏数据` : '')); renderList();
     } catch (err) { alert('导入失败：' + err.message); }
   };
 }
@@ -41,24 +46,30 @@ function download(name, text) {
 function renderSettings() {
   const s = settings.get();
   view.innerHTML = `
-    <div style="max-width:560px">
-      <h3>AI 接口（OpenAI 兼容）</h3>
+    <div style="max-width:560px;margin:0 auto">
+      <div class="panel">
+      <h3 style="margin-top:0">AI 接口（OpenAI 兼容）</h3>
       <label class="field">API 地址 <input id="apiUrl" placeholder="https://xxx/v1" value="${esc(s.apiUrl)}"></label>
       <label class="field">API Key <input id="apiKey" type="password" value="${esc(s.apiKey)}"></label>
-      <button id="fetch">拉取模型列表</button> <span class="muted" id="fetched"></span>
+      <div class="bar"><button id="fetch">拉取模型列表</button> <span class="muted" id="fetched"></span></div>
       <datalist id="models"></datalist>
-      <label class="field">识别模型（要能看图）<input id="visionModel" list="models" value="${esc(s.visionModel)}"></label>
-      <h3>生图接口（可选）</h3>
+      <label class="field">识别模型（要能看图）<input id="visionModel" list="models" placeholder="gemini-2.5-flash" value="${esc(s.visionModel)}"></label>
+      </div>
+      <div class="panel" style="margin-top:16px">
+      <h3 style="margin-top:0">生图接口（可选）</h3>
       <p class="muted">生图和识图不是同一家时才填；留空就用上面的接口。</p>
       <label class="field">生图 API 地址 <input id="imageApiUrl" placeholder="留空 = 同上" value="${esc(s.imageApiUrl)}"></label>
       <label class="field">生图 API Key <input id="imageApiKey" type="password" value="${esc(s.imageApiKey)}"></label>
-      <button id="fetchImg">拉取生图模型列表</button> <span class="muted" id="fetchedImg"></span>
+      <div class="bar"><button id="fetchImg">拉取生图模型列表</button> <span class="muted" id="fetchedImg"></span></div>
       <datalist id="imgModels"></datalist>
       <label class="field">生图模型 <input id="imageModel" list="imgModels" value="${esc(s.imageModel)}"></label>
-      <h3>发音</h3>
+      </div>
+      <div class="panel" style="margin-top:16px">
+      <h3 style="margin-top:0">发音</h3>
       <label class="field">Edge TTS 发音人 <input id="voice" list="voices" value="${esc(s.voice)}"></label>
       <datalist id="voices"><option>en-US-JennyNeural<option>en-US-GuyNeural<option>en-US-AriaNeural<option>en-GB-SoniaNeural<option>en-GB-RyanNeural<option>en-AU-NatashaNeural</datalist>
       <button id="test">🔊 试听 hello</button>
+      </div>
       <p class="muted">Key 只存在这台设备的浏览器里，不会上传到别处。</p>
       <div class="bar"><button id="save" class="primary">保存</button></div>
     </div>`;
@@ -84,8 +95,13 @@ function renderSettings() {
   $('#save').onclick = () => { settings.set(collect()); toast('已保存'); location.hash = '#/'; };
 }
 
+let cur = null; // 当前已渲染的 hash；编辑页没保存就离开时用来把地址退回去
 function route() {
-  const [, page, id] = location.hash.slice(1).split('/');
+  if (location.hash === cur) return;
+  if (view.dirty && !confirm('这一课还没保存，改动会丢。确定离开？')) { location.hash = cur; return; }
+  view.dirty = false;
+  cur = location.hash;
+  const [, page, id] = cur.slice(1).split('/');
   view.onclick = view.onkeydown = null;
   if (page === 'edit') renderEditor(view, id);
   else if (page === 'study') renderStudy(view, id);
@@ -93,5 +109,6 @@ function route() {
   else renderList();
 }
 addEventListener('hashchange', route);
+addEventListener('beforeunload', e => { if (view.dirty) e.preventDefault(); });
 route();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');

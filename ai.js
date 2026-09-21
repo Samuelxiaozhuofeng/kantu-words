@@ -23,14 +23,16 @@ async function call(path, body, forImage) {
 }
 export const listModels = forImage => call('/models', null, forImage).then(j => j.data.map(m => m.id).sort());
 
-// 图片缩到 1024 内再上传，省 token
-export async function toJpeg(blob, max = 1024) {
+// 图片按最长边缩放到 canvas 上（识别前缩到 1024 省 token；入库前缩到 1600 省空间）
+async function draw(blob, max) {
   const img = await createImageBitmap(blob);
   const k = Math.min(1, max / Math.max(img.width, img.height));
   const c = Object.assign(document.createElement('canvas'), { width: Math.round(img.width * k), height: Math.round(img.height * k) });
   c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-  return c.toDataURL('image/jpeg', 0.85);
+  return c;
 }
+export const toJpeg = async (blob, max = 1024) => (await draw(blob, max)).toDataURL('image/jpeg', 0.85);
+export const shrink = async (blob, max = 1600) => new Promise(r => draw(blob, max).then(c => c.toBlob(r, 'image/jpeg', 0.85)));
 
 const PROMPT = `Identify every distinct object in this image that an English learner should be able to name (clothes, shoes, furniture, food, tools, animals, etc). Skip tiny or ambiguous details.
 Return ONLY a JSON array, no prose, no markdown. Each element:

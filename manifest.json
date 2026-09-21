@@ -3,8 +3,8 @@
   "short_name": "看图记词",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#141416",
-  "theme_color": "#141416",
+  "background_color": "#f5efe3",
+  "theme_color": "#f5efe3",
   "icons": [
     { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
     { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }

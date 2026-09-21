@@ -8,11 +8,11 @@
 
 ## 功能
 
-- **备课**：上传图片，或输入描述让 AI 生图；「AI 识别」自动框出物品并生成单词、中文、美式音标、词性、同义答案；可以改词、拖框、删框、手动加框
+- **备课**：上传图片，或输入描述让 AI 生图；「AI 识别」自动框出物品并生成单词、中文、美式音标、词性、同义答案；可以改词、拖框（方向键微调）、删框、手动加框；没保存就离开会提醒
 - **学习**：框依次高亮，输入英文回车判对；中文提示三种模式（一直显示 / 答错后显示 / 不显示）；显示答案、上一个 / 下一个；走完出一次答对率
-- **判对规则**：不分大小写、忽略冠词和标点、AI 给的同义词算对、单复数差一个 s 算对
+- **判对规则**：不分大小写、忽略冠词和标点、AI 给的同义词算对、单复数（s / es）算对
 - **发音**：微软 Edge 朗读（免费、不要 Key），发音人可换；本地缓存；失败自动降级浏览器自带朗读
-- **数据**：全部存在本机浏览器（IndexedDB），支持导出 / 导入 JSON 备份
+- **数据**：全部存在本机浏览器（IndexedDB），图片入库前压到 1600px JPEG；支持导出 / 导入 JSON 备份
 
 ## 需要准备
 
@@ -24,8 +24,8 @@ Key 只存在浏览器 localStorage，不经过任何第三方服务器；接口
 
 ```bash
 npx wrangler login
-npx wrangler pages project create kantu-words --production-branch main
-npx wrangler pages deploy . --project-name kantu-words --branch main
+npx wrangler pages project create kantu-words --production-branch master
+npx wrangler pages deploy . --project-name kantu-words --branch master
 ```
 
 免费额度够个人用。

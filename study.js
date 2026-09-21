@@ -4,71 +4,80 @@ import { speak } from './tts.js';
 import { boxStyle } from './editor.js';
 
 const norm = s => s.toLowerCase().trim().replace(/^(a|an|the)\s+/, '').replace(/[^a-z\s'-]/g, '').replace(/\s+/g, ' ').trim();
-// 判对：不分大小写、忽略冠词和标点、AI 给的同义词算对、单复数差一个 s 也算对
+// 判对：不分大小写、忽略冠词和标点、AI 给的同义词算对、单复数（s / es）也算对
 export const isRight = (input, it) => {
   const a = norm(input);
-  return !!a && [it.en, ...(it.alts || [])].some(w => { const b = norm(w); return a === b || a === b + 's' || a + 's' === b; });
+  return !!a && [it.en, ...(it.alts || [])].some(w => { const b = norm(w); return [b, b + 's', b + 'es'].includes(a) || [a + 's', a + 'es'].includes(b); });
 };
+
+const MODES = { always: '一直显示', wrong: '答错后显示', never: '不显示' };
 
 export async function renderStudy(view, id) {
   const lesson = await db.get(id);
-  if (!lesson?.items.length) { view.innerHTML = '<p>这一课还没有词，先去编辑。</p>'; return; }
-  const items = lesson.items, done = new Map(); // i -> 是否一次答对
-  let i = 0, wrong = 0, revealed = false;
+  if (!lesson?.items.length) { view.innerHTML = '<div class="empty"><b>这一课还没有词</b>先去编辑页让 AI 识别一下</div>'; return; }
+  const items = lesson.items, n = items.length, done = new Map(); // i -> 是否一次答对
+  let i = 0, wrong = 0, revealed = false, hintMode = settings.get().hintMode;
   const imgUrl = URL.createObjectURL(lesson.image);
 
-  view.innerHTML = `
-    <div class="bar"><b>${esc(lesson.title)}</b><span class="muted" id="prog"></span><span class="sp" style="flex:1"></span>
-      <label class="muted">中文提示 <select id="mode" style="width:auto"><option value="always">一直显示</option><option value="wrong">答错后显示</option><option value="never">不显示</option></select></label></div>
+  view.innerHTML = `<div class="study">
+    <div class="top"><span class="step"><span id="prog"></span><small>/ ${n}</small></span><b>${esc(lesson.title)}</b>
+      <span class="seg" id="mode">${Object.entries(MODES).map(([k, v]) => `<button data-m="${k}">${v}</button>`).join('')}</span></div>
     <div class="progress"><i id="bar"></i></div>
     <div class="two">
       <div class="stage"><img src="${imgUrl}"><div class="box sel" id="box"></div></div>
-      <div class="study-right">
+      <div class="panel deck">
         <div class="hint" id="hint"></div>
-        <input class="big" id="in" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="输入英文">
+        <input class="big" id="in" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="输入英文">
         <div class="answer" id="ans"></div>
-        <div class="bar" style="justify-content:center">
-          <button id="prev">‹ 上一个</button><button id="say">🔊 发音</button><button id="show">显示答案</button><button id="submit" class="primary">提交 ⏎</button><button id="next">下一个 ›</button>
+        <div class="bar">
+          <button id="prev" title="上一个">‹</button><button id="say">🔊 发音</button><button id="show">答案</button><button id="submit" class="primary">提交 ⏎</button><button id="next" title="下一个">›</button>
         </div>
-        <p class="muted"><kbd>Enter</kbd> 提交 · <kbd>Ctrl</kbd>+<kbd>'</kbd> 发音 · <kbd>Ctrl</kbd>+<kbd>;</kbd> 答案</p>
+        <p class="muted tips"><kbd>Enter</kbd> 提交 · <kbd>Ctrl</kbd>+<kbd>'</kbd> 发音 · <kbd>Ctrl</kbd>+<kbd>;</kbd> 答案</p>
       </div>
-    </div>`;
-  const $ = s => view.querySelector(s), inp = $('#in'), mode = $('#mode');
-  mode.value = settings.get().hintMode;
-  mode.onchange = () => { settings.set({ ...settings.get(), hintMode: mode.value }); show(); };
+    </div></div>`;
+  const $ = s => view.querySelector(s), inp = $('#in');
+  $('#mode').onclick = e => { if (e.target.dataset.m) { hintMode = e.target.dataset.m; settings.set({ ...settings.get(), hintMode }); show(); } };
 
   function show() {
     const it = items[i];
     $('#box').style.cssText = boxStyle(it.box);
-    $('#prog').textContent = `${i + 1} / ${items.length}`;
-    $('#bar').style.width = (done.size / items.length * 100) + '%';
-    const m = mode.value;
-    $('#hint').textContent = m === 'always' || (m === 'wrong' && wrong > 0) ? it.zh : '';
-    $('#ans').textContent = revealed ? `${it.en}  ${it.ipa}  ${it.pos}` : '';
+    $('#prog').textContent = i + 1;
+    $('#bar').style.width = (done.size / n * 100) + '%';
+    for (const b of $('#mode').children) b.classList.toggle('on', b.dataset.m === hintMode);
+    const showHint = hintMode === 'always' || (hintMode === 'wrong' && wrong > 0);
+    $('#hint').textContent = showHint ? it.zh : '···';
+    $('#hint').className = 'hint' + (showHint ? '' : ' blank');
+    $('#ans').className = 'answer';
+    $('#ans').innerHTML = revealed ? `${esc(it.en)} <span class="ipa">${esc(it.ipa)}</span> ${esc(it.pos)}` : '';
     inp.className = 'big' + (done.has(i) ? ' ok' : '');
     inp.value = done.has(i) ? it.en : '';
-    inp.disabled = done.has(i);
+    inp.readOnly = done.has(i); // 用 readOnly 不用 disabled，焦点留在框里，快捷键才有效
     inp.focus();
   }
-  const go = d => { i = (i + d + items.length) % items.length; wrong = 0; revealed = false; show(); };
+  // skipDone：答对后自动前进时跳过已答完的，直到剩下的都做完
+  const go = (d, skipDone) => {
+    do i = (i + d + n) % n; while (skipDone && done.has(i) && done.size < n);
+    wrong = 0; revealed = false; show();
+  };
   function submit() {
-    if (done.has(i)) return go(1);
+    if (done.has(i)) return go(1, true);
     const it = items[i];
     if (isRight(inp.value, it)) {
       done.set(i, wrong === 0 && !revealed);
-      inp.className = 'big ok'; inp.disabled = true; $('#ans').textContent = `✓ ${it.en}  ${it.ipa}`;
+      inp.className = 'big ok'; inp.readOnly = true;
+      $('#ans').className = 'answer ok'; $('#ans').innerHTML = `✓ ${esc(it.en)} <span class="ipa">${esc(it.ipa)}</span>`;
       speak(it.en);
-      setTimeout(() => done.size === items.length ? finish() : go(1), 900);
+      setTimeout(() => done.size === n ? finish() : go(1, true), 900);
     } else {
       wrong++; inp.className = 'big'; void inp.offsetWidth; inp.className = 'big bad';
-      if (mode.value === 'wrong') $('#hint').textContent = it.zh;
+      if (hintMode === 'wrong') { $('#hint').textContent = it.zh; $('#hint').className = 'hint'; }
       inp.select();
     }
   }
   function finish() {
     const first = [...done.values()].filter(Boolean).length;
-    view.innerHTML = `<div class="study-right"><h2>完成！</h2><p>一次答对 ${first} / ${items.length}</p>
-      <div>${items.map((it, k) => `<div>${done.get(k) ? '✓' : '△'} ${esc(it.en)} <span class="muted">${esc(it.zh)}</span></div>`).join('')}</div>
+    view.innerHTML = `<div class="result"><div class="score">${first} / ${n}</div><p class="muted">一次答对</p>
+      <ul>${items.map((it, k) => `<li><span class="k ${done.get(k) ? 'ok' : 'no'}">${done.get(k) ? '✓' : '△'}</span><b>${esc(it.en)}</b><span class="muted">${esc(it.zh)}</span></li>`).join('')}</ul>
       <div class="bar"><button id="again" class="primary">再来一遍</button><a class="btn" href="#/">回列表</a></div></div>`;
     view.querySelector('#again').onclick = () => renderStudy(view, id);
   }
