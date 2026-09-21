@@ -8,6 +8,7 @@
 
 ## 功能
 
+- **内置课程**：第一次打开自动放进 12 课现成的（卧室、厨房、浴室、客厅、教室、超市、水果摊、衣柜、书桌文具、公园、动物园、交通工具），不填 Key 就能学；跟自己的课一样可改可删
 - **备课**：上传图片，或输入描述让 AI 生图；「AI 识别」自动框出物品并生成单词、中文、美式音标、词性、同义答案；可以改词、拖框（方向键微调）、删框、手动加框；没保存就离开会提醒
 - **学习**：四种练法可切换——打英文（框亮起，看中文打英文）、听音点图（播发音，点图里对应的物品，出题顺序打乱）、选英文 / 选中文（框亮起，四选一，键盘 1–4）；中文提示三种模式（一直显示 / 答错后显示 / 不显示）；显示答案、上一个 / 下一个；走完出一次答对率
 - **判对规则**：不分大小写、忽略冠词和标点、AI 给的同义词算对、单复数（s / es）算对
@@ -16,7 +17,7 @@
 
 ## 需要准备
 
-一个 **OpenAI 兼容**的 API 地址和 Key（OpenAI、Gemini 的 OpenAI 兼容端点、各类中转站都行）。识别模型要能看图，推荐 Gemini Flash 系列（框物品坐标准、便宜）。生图可选，模型要支持 `/images/generations`。
+只玩内置课程什么都不用准备。要自己传图建课，需要一个 **OpenAI 兼容**的 API 地址和 Key（OpenAI、Gemini 的 OpenAI 兼容端点、各类中转站都行）。识别模型要能看图，推荐 Gemini Flash 系列（框物品坐标准、便宜）。生图可选，模型要支持 `/images/generations`。
 
 Key 只存在浏览器 localStorage，不经过任何第三方服务器；接口没开 CORS 时请求会经你自己部署的 `/proxy` 函数转一手。
 
@@ -42,6 +43,7 @@ npx wrangler pages deploy . --project-name kantu-words --branch master
 | `tts.js` | 发音：缓存 → `/tts` → 降级 |
 | `lib.js` | IndexedDB、设置、小工具 |
 | `sw.js` `manifest.json` | PWA |
+| `packs/` | 内置课程：`index.json`（词表 + 框）和图片，首次打开导入本机 |
 | `functions/tts.js` | Cloudflare 函数：代连 Edge TTS（浏览器不能自己设那些请求头） |
 | `functions/proxy.js` | Cloudflare 函数：给没开 CORS 的接口转一手 |
 

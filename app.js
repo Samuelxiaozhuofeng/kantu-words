@@ -43,6 +43,23 @@ function download(name, text) {
   a.click();
 }
 
+// 内置课程：第一次打开把 packs/ 里的课放进本机课程库（已有同 id 的跳过），之后不再放——删了不会再冒出来
+async function addPacks() {
+  if (settings.get().packsAdded) return 0;
+  const have = new Set((await db.all()).map(l => l.id));
+  const r = await fetch('packs/index.json');
+  if (!r.ok) throw new Error(r.status);
+  let k = 0;
+  for (const [i, p] of (await r.json()).entries()) {
+    if (have.has(p.id)) continue;
+    const image = await (await fetch('packs/' + p.image)).blob();
+    await db.put({ id: p.id, title: p.title, items: p.items, image, created: Date.UTC(2026, 0, 1) - i * 1000 }); // 固定旧时间：排在用户自己的课后面
+    k++;
+  }
+  settings.set({ ...settings.get(), packsAdded: true });
+  return k;
+}
+
 function renderSettings() {
   const s = settings.get();
   view.innerHTML = `
@@ -106,7 +123,10 @@ function route() {
   if (page === 'edit') renderEditor(view, id);
   else if (page === 'study') renderStudy(view, id);
   else if (page === 'settings') renderSettings();
-  else renderList();
+  else {
+    renderList();
+    addPacks().then(k => { if (k) { toast(`已放入 ${k} 课内置课程，不填 Key 也能玩`); if (cur === location.hash) renderList(); } }).catch(e => console.warn('内置课程没拿到，下次再试', e));
+  }
 }
 addEventListener('hashchange', route);
 addEventListener('beforeunload', e => { if (view.dirty) e.preventDefault(); });

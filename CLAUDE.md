@@ -24,6 +24,7 @@ npx wrangler pages deploy . --project-name kantu-words --branch master   # 上�
 - **AI 调用**（`ai.js`）：只认 OpenAI 兼容接口，`call()` 先直连，fetch 抛错（CORS）就改走 `/proxy?url=`。`functions/proxy.js` 只放行 `/models` `/chat/completions` `/images/generations` 三个路径。识图 prompt 在 `ai.js` 的 `PROMPT`，改输出字段要同步改 `detect()` 的过滤和 `app.js` 导入时的补默认值。
 - **发音**（`tts.js` → `functions/tts.js`）：IndexedDB `audio` 表按 `voice|text` 缓存 MP3；`/tts` 函数用 Cloudflare 的 `fetch` Upgrade: websocket 代连微软 Edge TTS 非公开接口，返回 403 时先对顶部的 `VERSION` / `UA`。失败降级到 `speechSynthesis`。
 - **PWA**（`sw.js`）：`FILES` 列表是硬编码的预缓存清单，**新增 JS 文件必须加进去**；策略是网络优先、失败用缓存，`/tts` 不缓存。改了静态文件线上没生效先想到 SW 缓存。
+- **内置课程**（`packs/`）：`index.json` 是 12 课的词表 + 框，图片 1024px JPEG。`app.js` 的 `addPacks()` 首次打开导入 IndexedDB（id `pack-<slug>`，已存在的跳过，`settings.packsAdded` 标记只放一次），之后和用户课程无区别。改词表直接改 `index.json`；重新识别用的是和 `ai.js` 同一份 prompt 调 Gemini。
 - `study.js` 的 `isRight` 是判对规则的唯一实现（大小写、冠词、标点、alts、s/es）。
 
 ## 约束
