@@ -3,29 +3,31 @@ import { settings, toast, langOf } from './lib.js';
 import { getAudio } from './tts.js';
 
 const AC = 'http://127.0.0.1:8765';
-const FIELDS = ['Key', 'Word', 'IPA', 'Meaning', 'Picture', 'Audio'];
+const FIELDS = ['Key', 'Word', 'IPA', 'Meaning', 'Picture', 'Audio', 'Sentence'];
 const CSS = `.card{font-family:system-ui,-apple-system,"PingFang SC",sans-serif;text-align:center;background:#f5efe3;color:#1c2233;padding:24px 16px;line-height:1.5}
 .card img{max-width:100%;border-radius:12px}
 .word{font-size:36px;font-weight:800;margin:8px 0}
 .ipa{color:#6f6a5e;font-size:18px}
 .zh{font-size:22px;margin:8px 0}
+.sent{color:#6f6a5e;font-size:16px;margin:8px 0}
 hr#answer{border:none;border-top:1px solid #e3d9c6;margin:16px 0}`;
 const PIC = '{{Picture}}';
 const WORD = '<div class="word">{{Word}}</div>{{Audio}}';
 const IPA = '<div class="ipa">{{IPA}}</div>';
 const ZH = '<div class="zh">{{Meaning}}</div>';
+const SENT = '<div class="sent">{{Sentence}}</div>';
 const HR = '<hr id=answer>';
 const card = (Name, Front, Back) => ({ Name, Front, Back: HR + Back });
 
 export const PRESETS = {
   pic: { name: '图 → 词', hint: '正面：高亮图　背面：词 + 音标 + 发音 + 中文',
-    cards: [card('卡', PIC, WORD + IPA + ZH)] },
+    cards: [card('卡', PIC, WORD + IPA + ZH + SENT)] },
   word: { name: '词 → 中文', hint: '正面：词 + 发音　背面：中文 + 高亮图',
-    cards: [card('卡', WORD, ZH + PIC)] },
+    cards: [card('卡', WORD, ZH + SENT + PIC)] },
   zh: { name: '中文 → 图', hint: '正面：中文　背面：高亮图 + 词 + 音标 + 发音',
-    cards: [card('卡', ZH, PIC + WORD + IPA)] },
+    cards: [card('卡', ZH, PIC + WORD + IPA + SENT)] },
   both: { name: '双向', hint: '两张卡：一张同「图 → 词」，一张同「中文 → 图」',
-    cards: [card('图→词', PIC, WORD + IPA + ZH), card('中→图', ZH, PIC + WORD + IPA)] },
+    cards: [card('图→词', PIC, WORD + IPA + ZH + SENT), card('中→图', ZH, PIC + WORD + IPA + SENT)] },
 };
 const modelOf = k => '看图记词·' + (PRESETS[k] || PRESETS.pic).name;
 
@@ -56,10 +58,11 @@ async function ensureModel(key) {
     await invoke('createModel', { modelName: name, inOrderFields: FIELDS, css: CSS, cardTemplates: p.cards });
     return name;
   }
-  // 同名但字段对不上的不是我们建的，别去刷人家的模板
+  // 同名但前 6 个字段对不上的不是我们建的，别去加字段、也别刷人家的模板
   const fields = await invoke('modelFieldNames', { modelName: name });
-  if (fields.join() !== FIELDS.join()) throw new Error(`Anki 里已有一个叫「${name}」的笔记类型但不是本应用建的，请在 Anki 里改名后再导出。`);
-  const templates =Object.fromEntries(p.cards.map(c => [c.Name, { Front: c.Front, Back: c.Back }]));
+  if (fields.slice(0, 6).join() !== FIELDS.slice(0, 6).join()) throw new Error(`Anki 里已有一个叫「${name}」的笔记类型但不是本应用建的，请在 Anki 里改名后再导出。`);
+  if (!fields.includes('Sentence')) await invoke('modelFieldAdd', { modelName: name, fieldName: 'Sentence', index: 6 });
+  const templates = Object.fromEntries(p.cards.map(c => [c.Name, { Front: c.Front, Back: c.Back }]));
   await invoke('updateModelTemplates', { model: { name, templates } });
   await invoke('updateModelStyling', { model: { name, css: CSS } });
   return name;
@@ -100,7 +103,7 @@ async function buildNote(q, deck, model) {
   const { lesson, item, key } = q, fname = 'kantu_' + await slug(key);
   const note = {
     deckName: deck, modelName: model,
-    fields: { Key: key, Word: item.en, IPA: item.ipa || '', Meaning: item.zh || '', Picture: '', Audio: '' },
+    fields: { Key: key, Word: item.en, IPA: item.ipa || '', Meaning: item.zh || '', Picture: '', Audio: '', Sentence: item.sent || '' },
     options: { allowDuplicate: false, duplicateScope: 'deck' },
     picture: [{ data: await highlight(lesson.image, item.box), filename: fname + '.jpg', fields: ['Picture'] }],
   };

@@ -73,7 +73,7 @@ async function renderList() {
       const ok = arr.filter(l => l && l.id && typeof l.image === 'string' && Array.isArray(l.items));
       for (const l of ok) await db.put({
         title: '未命名', created: Date.now(), ...l, image: await (await fetch(l.image)).blob(),
-        items: l.items.filter(i => i && i.en && Array.isArray(i.box) && i.box.length === 4).map(i => ({ zh: '', ipa: '', pos: '', alts: [], ...i })),
+        items: l.items.filter(i => i && i.en && Array.isArray(i.box) && i.box.length === 4).map(i => ({ zh: '', ipa: '', pos: '', alts: [], sent: '', sentZh: '', ...i })),
       });
       toast(`导入 ${ok.length} 课` + (ok.length < arr.length ? `，跳过 ${arr.length - ok.length} 条坏数据` : '')); renderList();
     } catch (err) { alert('导入失败：' + err.message); }
@@ -101,6 +101,23 @@ async function addPacks() {
   }
   settings.set({ ...settings.get(), packsAdded: true });
   return k;
+}
+// 内置课词表升级（目前只加了例句）：只给本机 pack 课里「词没被用户改过且还没有例句」的词填上，别的一律不动；跑过一次记版本号
+const PACKS_VER = 2;
+async function fillPackSents() {
+  if (settings.get().packsVer === PACKS_VER) return;
+  for (const p of await fetchPacks()) {
+    const l = await db.get(p.id);
+    if (!l) continue;
+    const fresh = packItems(p, langOf(l));
+    let changed = false;
+    l.items.forEach((it, k) => {
+      const f = fresh[k];
+      if (!it.sent && f?.sent && f.en === it.en) { it.sent = f.sent; it.sentZh = f.sentZh || ''; changed = true; }
+    });
+    if (changed) await db.put(l);
+  }
+  settings.set({ ...settings.get(), packsVer: PACKS_VER });
 }
 // 内置课换语种：原地替换本机已有的那几课的词表（删掉的不复活，图不重下）
 async function switchPacks(lang) {
@@ -225,7 +242,7 @@ function route() {
   else if (page === 'settings') renderSettings();
   else {
     renderList();
-    addPacks().then(k => { if (k) { toast(`已放入 ${k} 课内置课程，不填 Key 也能玩`); if (cur === location.hash) renderList(); } }).catch(e => console.warn('内置课程没拿到，下次再试', e));
+    addPacks().then(k => { if (k) { toast(`已放入 ${k} 课内置课程，不填 Key 也能玩`); if (cur === location.hash) renderList(); } }).then(fillPackSents).catch(e => console.warn('内置课程没拿到，下次再试', e));
   }
 }
 addEventListener('hashchange', route);

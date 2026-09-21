@@ -11,7 +11,7 @@ async function call(path, body, forImage) {
   const s = cfg();
   const url = ((forImage && s.imageApiUrl) || s.apiUrl).replace(/\/+$/, '') + path;
   const key = (forImage && s.imageApiUrl && s.imageApiKey) || s.apiKey;
-  const init = { method: body ? 'POST' : 'GET', headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) };
+  const init = { method: body ? 'POST' : 'GET', headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' }, body: body && JSON.stringify(path === '/chat/completions' ? { stream: false, ...body } : body) }; // 有的中转站默认流式，明说不要
   let r;
   try { r = await fetch(url, init); }
   catch { r = await fetch('/proxy?url=' + encodeURIComponent(url), init); }
@@ -34,32 +34,52 @@ async function draw(blob, max) {
 export const toJpeg = async (blob, max = 1024) => (await draw(blob, max)).toDataURL('image/jpeg', 0.85);
 export const shrink = async (blob, max = 1600) => new Promise(r => draw(blob, max).then(c => c.toBlob(r, 'image/jpeg', 0.85)));
 
+const parseArr = c => {
+  try { return JSON.parse(c.slice(c.indexOf('['), c.lastIndexOf(']') + 1)); }
+  catch { throw new Error('模型没按格式返回：' + c.slice(0, 200)); }
+};
+
 // 识图 prompt 按课程语种生成；数据字段仍叫 en（改字段名会连累内置课和备份），存的是该语种的词
-export const prompt = lang => {
+export const prompt = (lang, withSent) => {
   const L = LANGS[lang] || LANGS.en;
   return `Identify every distinct object in this image that a ${L.ai} learner should be able to name (clothes, shoes, furniture, food, tools, animals, etc). Skip tiny or ambiguous details.
 Return ONLY a JSON array, no prose, no markdown. Each element:
-{"en":"<${L.ai} word>","zh":"裙子","ipa":"<${L.ipa}>","pos":"n.","alts":["<alternative>"],"box":[ymin,xmin,ymax,xmax]}
+{"en":"<${L.ai} word>","zh":"裙子","ipa":"<${L.ipa}>","pos":"n.","alts":["<alternative>"],"box":[ymin,xmin,ymax,xmax]${withSent ? `,"sent":"<short ${L.ai} sentence>","sentZh":"这句话的中文"` : ''}}
 - en: the most common everyday ${L.ai} word for the object, written as it is normally written, WITHOUT any article (plural if the image shows a pair/multiple)
 - zh: simplified Chinese
 - ipa: ${L.ipa}
 - alts: other acceptable ${L.ai} answers (synonyms, spelling variants${lang === 'ja' ? '; ALWAYS include the hiragana reading, and the katakana form if the word is usually written in katakana' : ''}), may be empty
 - box: bounding box normalized to 0-1000 of the image, [ymin,xmin,ymax,xmax], tight around the object
-One element per object, no duplicates.`;
+${withSent ? `- sent: one short ${L.ai} sentence (≤ 12 words) describing the actual situation of this object in the picture; the word appears in the sentence exactly once
+- sentZh: simplified Chinese of that sentence
+` : ''}One element per object, no duplicates.`;
 };
 
-export async function detect(blob, lang = 'en') {
+export async function detect(blob, lang = 'en', withSent) {
   const s = cfg();
   if (!s.visionModel) throw new Error('请先在「设置」里选识别模型');
   const j = await call('/chat/completions', {
     model: s.visionModel, max_tokens: 8000,
-    messages: [{ role: 'user', content: [{ type: 'text', text: prompt(lang) }, { type: 'image_url', image_url: { url: await toJpeg(blob) } }] }],
+    messages: [{ role: 'user', content: [{ type: 'text', text: prompt(lang, withSent) }, { type: 'image_url', image_url: { url: await toJpeg(blob) } }] }],
   });
-  const c = j.choices[0].message.content;
-  let items; try { items = JSON.parse(c.slice(c.indexOf('['), c.lastIndexOf(']') + 1)); } catch { throw new Error('模型没按格式返回：' + c.slice(0, 200)); }
-  return items
+  return parseArr(j.choices[0].message.content)
     .filter(i => i.en && Array.isArray(i.box) && i.box.length === 4)
-    .map(i => ({ en: String(i.en), zh: i.zh || '', ipa: i.ipa || '', pos: i.pos || '', alts: (i.alts || []).map(String), box: i.box.map(n => Math.max(0, Math.min(1000, +n || 0))) }));
+    .map(i => ({ en: String(i.en), zh: i.zh || '', ipa: i.ipa || '', pos: i.pos || '', alts: (i.alts || []).map(String), box: i.box.map(n => Math.max(0, Math.min(1000, +n || 0))), sent: i.sent || '', sentZh: i.sentZh || '' }));
+}
+
+// 只发文字：给已有词补例句，每条必须回显原词 en，调用方按 en 匹配
+export async function fillSents(items, lang = 'en') {
+  const s = cfg();
+  if (!s.visionModel) throw new Error('请先在「设置」里选识别模型');
+  const L = LANGS[lang] || LANGS.en;
+  const j = await call('/chat/completions', {
+    model: s.visionModel, max_tokens: 8000,
+    messages: [{ role: 'user', content: `For each word write one short ${L.ai} sentence (≤ 12 words) in which the word appears exactly once, plus simplified Chinese.
+Return ONLY a JSON array, no prose, no markdown. Each element:
+{"en":"<original word exactly as given>","sent":"…","sentZh":"…"}
+Words: ${JSON.stringify(items.map(i => ({ en: i.en, zh: i.zh || '' })))}` }],
+  });
+  return parseArr(j.choices[0].message.content);
 }
 
 // 用户只给主题（一个词或一段话，中文也行），后面固定接「这图是拿来看图认物的」+ 规矩：每种物品只出现一次、分开摆、不要文字、不要人

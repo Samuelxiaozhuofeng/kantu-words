@@ -1,4 +1,4 @@
-// 学习页：四种练法（打英文 / 听音点图 / 选英文 / 选中文），框亮起或全部可点，走完出结果
+// 学习页：五种练法（打英文 / 听音点图 / 听句子点图 / 选英文 / 选中文），框亮起或全部可点，走完出结果
 import { db, esc, settings, LANGS, langOf, wrongEntries } from './lib.js';
 import { speak } from './tts.js';
 import { boxStyle } from './editor.js';
@@ -16,11 +16,12 @@ export const isRight = (input, it, lang = 'en') => {
   return !!a && [it.en, ...(it.alts || [])].some(w => { const b = norm(w, lang); return [b, b + 's', b + 'es'].includes(a) || [a + 's', a + 'es'].includes(b); });
 };
 
-const MODES = { type: '打单词', tap: '听音点图', pickEn: '选单词', pickZh: '选中文' };
+const MODES = { type: '打单词', tap: '听音点图', sent: '听句子点图', pickEn: '选单词', pickZh: '选中文' };
 const HINTS = { always: '一直显示', wrong: '答错后显示', never: '不显示' };
 const TIPS = {
   type: '<kbd>Enter</kbd> 提交 · <kbd>Ctrl</kbd>+<kbd>\'</kbd> 发音 · <kbd>Ctrl</kbd>+<kbd>;</kbd> 答案',
   tap: '听发音，点图里对应的物品 · <kbd>Ctrl</kbd>+<kbd>\'</kbd> 再听 · <kbd>Ctrl</kbd>+<kbd>;</kbd> 答案',
+  sent: '听句子，点图里说到的物品 · <kbd>Ctrl</kbd>+<kbd>\'</kbd> 再听 · <kbd>Ctrl</kbd>+<kbd>;</kbd> 答案',
   pick: '<kbd>1</kbd>–<kbd>4</kbd> 选 · <kbd>Ctrl</kbd>+<kbd>\'</kbd> 发音 · <kbd>Ctrl</kbd>+<kbd>;</kbd> 答案',
 };
 const shuffle = a => { for (let k = a.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [a[k], a[j]] = [a[j], a[k]]; } return a; };
@@ -41,21 +42,23 @@ export async function renderStudy(view, id, given) {
       : '<div class="empty"><b>这一课还没有词</b>先去编辑页让 AI 识别一下</div>';
     return;
   }
-  const s = settings.get(), mode = MODES[s.studyMode] ? s.studyMode : 'type', pick = mode.startsWith('pick');
+  const s = settings.get(), hasSent = quiz0.some(q => q.item.sent);
+  const mode = s.studyMode === 'sent' && !hasSent ? 'tap' : MODES[s.studyMode] ? s.studyMode : 'type';
+  const pick = mode.startsWith('pick'), tap = mode === 'tap' || mode === 'sent';
   // 点图模式打乱出题顺序，不然按位置就能记住
-  const items = mode === 'tap' ? shuffle([...quiz0]) : quiz0, n = items.length, done = new Map(); // i -> 是否一次答对
+  const items = tap ? shuffle([...quiz0]) : quiz0, n = items.length, done = new Map(); // i -> 是否一次答对
   const urls = new Map();
   const urlOf = l => { if (!urls.has(l.id)) urls.set(l.id, URL.createObjectURL(l.image)); return urls.get(l.id); };
   let i = 0, wrong = 0, revealed = false, hintMode = s.hintMode, choices = [], bad = new Set(), stageId = '';
-  // 提示区放什么：打英文 / 选英文时给中文，听音点图 / 选中文时给英文
-  const hintOf = it => mode === 'type' || mode === 'pickEn' ? it.zh : it.en;
+  // 提示区放什么：打英文 / 选英文时给中文，听音点图 / 选中文时给英文，听句子点图给句子（没有就给词）
+  const hintOf = it => mode === 'type' || mode === 'pickEn' ? it.zh : mode === 'sent' ? (it.sent || it.en) : it.en;
   const label = it => mode === 'pickZh' && it.zh ? it.zh : it.en;
   const cur = () => items[i];
-  const say = () => speak(cur().item.en, langOf(cur().lesson));
+  const say = () => speak(mode === 'sent' && cur().item.sent ? cur().item.sent : cur().item.en, langOf(cur().lesson));
 
   view.innerHTML = `<div class="study ${mode}" tabindex="-1">
     <div class="top"><span class="step"><span id="prog"></span><small>/ ${n}</small></span><b id="title"></b>
-      <span class="segs"><span class="seg" id="modeSeg">${Object.entries(MODES).map(([k, v]) => `<button data-mode="${k}" class="${k === mode ? 'on' : ''}">${v}</button>`).join('')}</span>
+      <span class="segs"><span class="seg" id="modeSeg">${Object.entries(MODES).filter(([k]) => hasSent || k !== 'sent').map(([k, v]) => `<button data-mode="${k}" class="${k === mode ? 'on' : ''}">${v}</button>`).join('')}</span>
       <span class="seg" id="hintSeg">${Object.entries(HINTS).map(([k, v]) => `<button data-m="${k}">${v}</button>`).join('')}</span></span></div>
     <div class="progress"><i id="bar"></i></div>
     <div class="two">
@@ -79,7 +82,7 @@ export async function renderStudy(view, id, given) {
     const L = cur().lesson;
     if (stageId === L.id) return;
     stageId = L.id;
-    $('#stage').innerHTML = `<img src="${urlOf(L)}">` + (mode === 'tap'
+    $('#stage').innerHTML = `<img src="${urlOf(L)}">` + (tap
       ? L.items.map((it, k) => `<div class="box" data-i="${k}" style="${boxStyle(it.box)}"><span class="tag">${esc(it.en)}</span></div>`).join('')
       : '<div class="box sel" id="box"></div>');
   }
@@ -96,8 +99,9 @@ export async function renderStudy(view, id, given) {
     for (const b of $('#hintSeg').children) b.classList.toggle('on', b.dataset.m === hintMode);
     drawHint();
     $('#ans').className = 'answer' + (ok ? ' ok' : '');
-    $('#ans').innerHTML = ok ? `✓ ${esc(it.en)} <span class="ipa">${esc(it.ipa)}</span>` : revealed ? `${esc(it.en)} <span class="ipa">${esc(it.ipa)}</span> ${esc(it.pos)}` : '';
-    if (mode === 'tap') {
+    const extra = mode === 'sent' && it.sent ? `<div class="sent">${esc(it.sent)}</div><div class="sentZh">${esc(it.sentZh)}</div>` : mode !== 'sent' && it.sent ? `<div class="sent">${esc(it.sent)}</div>` : '';
+    $('#ans').innerHTML = ok || revealed ? `${ok ? '✓ ' : ''}${esc(it.en)} <span class="ipa">${esc(it.ipa)}</span>${ok || mode === 'sent' ? '' : ' ' + esc(it.pos)}${extra}` : '';
+    if (tap) {
       const L = q.lesson;
       for (const b of $('#stage').querySelectorAll('.box')) {
         const itB = L.items[+b.dataset.i];
@@ -126,7 +130,7 @@ export async function renderStudy(view, id, given) {
     }
     show();
     if (!inp) $('.study').focus({ preventScroll: true }); // 快捷键挂在 view 上，焦点得在里面
-    if (mode === 'tap' && !done.has(i)) say();
+    if (tap && !done.has(i)) say();
   }
   // skipDone：答对后自动前进时跳过已答完的，直到剩下的都做完
   const go = (d, skipDone) => {
@@ -135,7 +139,7 @@ export async function renderStudy(view, id, given) {
   };
   function correct() {
     done.set(i, wrong === 0 && !revealed);
-    if (mode !== 'tap') say(); // 点图模式刚播过，不重复
+    if (!tap) say(); // 点图模式刚播过，不重复
     show();
     setTimeout(() => { if (root.isConnected) done.size === n ? finish() : go(1, true); }, 900); // 900ms 内切了模式或离开页面就作废
   }
@@ -183,7 +187,7 @@ export async function renderStudy(view, id, given) {
   }
   if (mode === 'type') $('#submit').onclick = submit;
   if (pick) $('#choices').onclick = e => { const k = e.target.dataset.k; if (k) choose(choices[k]); };
-  if (mode === 'tap') $('#stage').onclick = tapAt;
+  if (tap) $('#stage').onclick = tapAt;
   $('#prev').onclick = () => go(-1);
   $('#next').onclick = () => go(1);
   $('#say').onclick = say;
