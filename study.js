@@ -1,5 +1,6 @@
-// 学习页：六种练法（打英文 / 听音点图 / 听句子点图 / 选英文 / 选中文 / 填搭配），框亮起或全部可点，走完出结果
+// 学习页：六种练法（打英文 / 听音点图 / 听句子点图 / 选英文 / 选中文 / 填搭配）+ 新词「先过一遍」；「今天」题单每题按熟练度自带练法，答完当场写记忆状态并显示升降
 import { db, esc, toast, settings, LANGS, langOf, setArchived, wrongEntries, keysOf, keyParts, comboOf, colOf } from './lib.js';
+import { keyOf, record, modeFor, buildToday, prog, logDay, streak, levelName, dueText, MASTER } from './progress.js';
 import { speak } from './tts.js';
 import { boxStyle } from './editor.js';
 
@@ -19,6 +20,7 @@ export const isRight = (input, it, lang = 'en') => {
 const MODES = { type: '打单词', tap: '听音点图', sent: '听句子点图', pickEn: '选单词', pickZh: '选中文', col: '填搭配' };
 const HINTS = { always: '一直显示', wrong: '答错后显示', never: '不显示' };
 const NEXTS = [[1, '自动下一题'], [0, '答完停住']];
+const isPick = m => m.startsWith('pick'), isTap = m => m === 'tap' || m === 'sent', isTyped = m => m === 'type' || m === 'col';
 const kbd = combo => keyParts(combo).map(k => `<kbd>${esc(k)}</kbd>`).join('+');
 // 提示条：快捷键按设置里的来；停住模式多一句 Enter 下一题
 const tips = (mode, keys, autoNext) => ({
@@ -26,46 +28,57 @@ const tips = (mode, keys, autoNext) => ({
   tap: `听发音，点图里对应的物品`,
   sent: `听句子，点图里说到的物品`,
   pickEn: '<kbd>1</kbd>–<kbd>4</kbd> 选', pickZh: '<kbd>1</kbd>–<kbd>4</kbd> 选',
-}[mode] + ` · ${kbd(keys.say)} 发音 · ${kbd(keys.show)} 答案 · ${kbd(keys.mark)} 错题本` + (autoNext ? '' : ' · <kbd>Enter</kbd> 下一题'));
+  learn: '新词先认一遍 · <kbd>Enter</kbd> 下一个',
+}[mode] + ` · ${kbd(keys.say)} 发音 · ${kbd(keys.show)} 答案 · ${kbd(keys.mark)} 错题本` + (autoNext || mode === 'learn' ? '' : ' · <kbd>Enter</kbd> 下一题'));
 const shuffle = a => { for (let k = a.length - 1; k > 0; k--) { const j = Math.floor(Math.random() * (k + 1)); [a[k], a[j]] = [a[j], a[k]]; } return a; };
+// 能出题的搭配：括号里至少有一个答案（手打成「[] the kettle」或坏备份里的空串，出了题谁也答不对）
+const colsOf = it => (it.col || []).filter(c => c && colOf(c.en).answers.length);
+const pickCol = it => { const a = colsOf(it); return a[Math.floor(Math.random() * a.length)]; };
 
-// 三种入口共用题单：整课 / 错题本 / 本次错的。id === 'wrong' 不是课程 id，别拿去 db.get
-async function loadQuiz(id, given) {
+// 四种入口共用题单 [{ lesson, item, mode, fresh?, col? }]：整课 / 错题本 / 本次错的 / 今天（到期复习 + 新词）。'today' 'wrong' 不是课程 id，别拿去 db.get
+async function loadQuiz(id, given, only) {
   if (given) return given;
-  if (id === 'wrong') return wrongEntries(await db.all(), settings.get().wrong);
-  const lesson = await db.get(id);
-  return lesson?.items.length ? lesson.items.map(item => ({ lesson, item })) : [];
+  if (id === 'today') {
+    const { due, fresh } = buildToday(await db.all(), await prog.all(), only);
+    const q = shuffle([...fresh.map(q => ({ ...q, fresh: true, mode: modeFor(0, q.item) })), ...due.map(q => ({ ...q, mode: modeFor(q.level, q.item) }))]);
+    for (const x of q) if (x.mode === 'col') x.col = pickCol(x.item);
+    return [...fresh.map(q => ({ ...q, mode: 'learn' })), ...q]; // 新词先全部过一遍，再混着考
+  }
+  const base = id === 'wrong' ? wrongEntries(await db.all(), settings.get().wrong) : ((await db.get(id))?.items || []).map(item => ({ lesson: null, item }));
+  if (id !== 'wrong') { const lesson = await db.get(id); for (const q of base) q.lesson = lesson; }
+  if (!base.length) return [];
+  // 固定练法（用户选的）：题单里没句子 / 搭配时退回可用的
+  const s = settings.get(), hasSent = base.some(q => q.item.sent), hasCol = base.some(q => colsOf(q.item).length);
+  const mode = s.studyMode === 'sent' && !hasSent ? 'tap' : s.studyMode === 'col' && !hasCol ? 'type' : MODES[s.studyMode] ? s.studyMode : 'type';
+  const quiz = mode === 'col' ? base.filter(q => colsOf(q.item).length).map(q => ({ ...q, col: pickCol(q.item) })) : base.map(q => ({ ...q }));
+  for (const q of quiz) q.mode = mode;
+  return isTap(mode) ? shuffle(quiz) : quiz; // 点图模式打乱出题顺序，不然按位置就能记住
 }
 
-export async function renderStudy(view, id, given) {
-  const quiz0 = await loadQuiz(id, given);
-  if (!quiz0.length) {
-    view.innerHTML = id === 'wrong'
-      ? '<div class="empty"><b>错题本是空的</b>练完有答错过的词会记在这里</div>'
+export async function renderStudy(view, id, given, only) {
+  const items = await loadQuiz(id, given, only), isToday = id === 'today';
+  if (!items.length) {
+    const k = streak();
+    view.innerHTML = isToday ? `<div class="empty"><b>今天的都学完了 🎉</b>${k ? `连续学习 ${k} 天。` : ''}明天到期的词会在这里等你。<div class="bar" style="justify-content:center;margin-top:16px"><a class="btn primary" href="#/">回首页</a></div></div>`
+      : id === 'wrong' ? '<div class="empty"><b>错题本是空的</b>练完有答错过的词会记在这里</div>'
       : '<div class="empty"><b>这一课还没有词</b>先去编辑页让 AI 识别一下</div>';
     return;
   }
-  const s = settings.get(), hasSent = quiz0.some(q => q.item.sent);
-  // 能出题的搭配：括号里至少有一个答案（手打成「[] the kettle」或坏备份里的空串，出了题谁也答不对）
-  const colsOf = it => (it.col || []).filter(c => c && colOf(c.en).answers.length);
-  const hasCol = quiz0.some(q => colsOf(q.item).length);
-  const mode = s.studyMode === 'sent' && !hasSent ? 'tap' : s.studyMode === 'col' && !hasCol ? 'type' : MODES[s.studyMode] ? s.studyMode : 'type';
-  const pick = mode.startsWith('pick'), tap = mode === 'tap' || mode === 'sent', typed = mode === 'type' || mode === 'col';
-  const pickCol = it => { const a = colsOf(it); return a[Math.floor(Math.random() * a.length)]; };
-  // 填搭配：只出有搭配的词，每人随机抽一条；点图模式打乱出题顺序，不然按位置就能记住
-  const quiz = mode === 'col' ? quiz0.filter(q => colsOf(q.item).length).map(q => ({ ...q, col: pickCol(q.item) })) : quiz0;
-  const items = tap ? shuffle([...quiz]) : quiz, n = items.length, done = new Map(); // i -> 是否一次答对
+  const s = settings.get(), n = items.length, done = new Map(), fbs = new Map(); // i -> 是否一次答对；i -> 记忆状态反馈
+  const quizN = items.filter(q => q.mode !== 'learn').length;
+  const fixed = !isToday && !given?.some(q => q.fresh || q.mode === 'learn') ? items[0].mode : null; // 固定练法的场次才有练法切换条
+  const hasSent = items.some(q => q.item.sent), hasCol = items.some(q => colsOf(q.item).length);
   const allLessons = await db.all();
   const urls = new Map();
   const urlOf = l => { if (!urls.has(l.id)) urls.set(l.id, URL.createObjectURL(l.image)); return urls.get(l.id); };
-  let i = 0, wrong = 0, revealed = false, hintMode = s.hintMode, choices = [], bad = new Set(), stageId = '';
+  let i = 0, wrong = 0, revealed = false, hintMode = s.hintMode, choices = [], bad = new Set(), stageKey = '', mode = items[0].mode, inp = null;
   const keys = keysOf(); let autoNext = s.autoNext !== false; // 答对后自动下一题（默认）还是停在答案上看
-  const keyOf = q => q.lesson.id + '|' + q.item.en;
   // 错题本随答随写：没一次答对的当场记进去，勾选框能立刻反映、中途退出也不丢
   const setBook = (k, on) => { const b = { ...settings.get().wrong }; if (on) b[k] ||= Date.now(); else delete b[k]; settings.set({ ...settings.get(), wrong: b }); };
-  // 提示区放什么：打英文 / 选英文时给中文，听音点图 / 选中文时给英文，听句子点图给句子（没有就给词），填搭配给中文 + 挖空句
+  // 提示区放什么：打英文 / 选英文时给中文，听音点图 / 选中文时给英文，听句子点图给句子（没有就给词），填搭配给中文 + 挖空句，认词给「新词」
   const hintOf = () => {
     const q = cur(), it = q.item;
+    if (mode === 'learn') return '新词 · 先认一下';
     if (mode === 'col') { const c = q.col; return (c.zh ? c.zh + ' · ' : '') + colOf(c.en).blank; }
     return mode === 'type' || mode === 'pickEn' ? it.zh : mode === 'sent' ? (it.sent || it.en) : it.en;
   };
@@ -86,29 +99,22 @@ export async function renderStudy(view, id, given) {
     }
     return n;
   };
+  // 记忆状态一句话：升到几级、下次几天后见
+  const fbText = f => !f ? '' : !f.counted ? `今天已计过 · ${dueText(f.due)}再见` : !f.first ? (f.before <= 1 ? `记下了 · ${dueText(f.due)}再考` : `↓ 回到 ${levelName(f.after)} · ${dueText(f.due)}再考`) : f.after >= MASTER && f.before < MASTER ? `🏅 已掌握 · ${dueText(f.due)}再见` : `↑ ${levelName(f.after)} · ${dueText(f.due)}再见`;
 
-  view.innerHTML = `<div class="study ${mode}" tabindex="-1">
+  view.innerHTML = `<div class="study" tabindex="-1">
     <div class="top"><span class="step"><span id="prog"></span><small>/ ${n}</small></span><b id="title"></b>
-      <span class="segs"><span class="seg" id="modeSeg">${Object.entries(MODES).filter(([k]) => (hasSent || k !== 'sent') && (hasCol || k !== 'col')).map(([k, v]) => `<button data-mode="${k}" class="${k === mode ? 'on' : ''}">${v}</button>`).join('')}</span>
+      <span class="segs">${fixed ? `<span class="seg" id="modeSeg">${Object.entries(MODES).filter(([k]) => (hasSent || k !== 'sent') && (hasCol || k !== 'col')).map(([k, v]) => `<button data-mode="${k}" class="${k === fixed ? 'on' : ''}">${v}</button>`).join('')}</span>` : '<span class="muted auto">按熟练度自动出题</span>'}
       <span class="seg" id="hintSeg">${Object.entries(HINTS).map(([k, v]) => `<button data-m="${k}">${v}</button>`).join('')}</span>
       <span class="seg" id="nextSeg">${NEXTS.map(([k, v]) => `<button data-n="${k}" class="${+k === +autoNext ? 'on' : ''}">${v}</button>`).join('')}</span></span></div>
     <div class="progress"><i id="bar"></i></div>
     <div class="two">
       <div class="stage" id="stage"></div>
-      <div class="panel deck">
-        <div class="hint" id="hint"></div>
-        ${typed ? `<input class="big" id="in" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="">` : ''}
-        ${pick ? '<div class="choices" id="choices"></div>' : ''}
-        <div class="answer" id="ans"></div>
-        <div class="bar">
-          <button id="prev" title="上一个">‹</button><button id="say">🔊 发音</button><button id="show">答案</button>${typed ? '<button id="submit" class="primary">提交 ⏎</button>' : ''}<button id="next" title="下一个">›</button>
-          <label class="chk"><input type="checkbox" id="mark"> 错题本</label>
-        </div>
-        <p class="muted tips">${tips(mode, keys, autoNext)}</p>
-      </div>
+      <div class="panel deck" id="deck"></div>
     </div></div>`;
-  const $ = q => view.querySelector(q), inp = $('#in'), root = $('.study');
-  $('#modeSeg').onclick = e => { const m = e.target.dataset.mode; if (m && m !== mode) { settings.set({ ...settings.get(), studyMode: m }); renderStudy(view, id, given); } };
+  const $ = q => view.querySelector(q), root = $('.study');
+  const modeSeg = $('#modeSeg');
+  if (modeSeg) modeSeg.onclick = e => { const m = e.target.dataset.mode; if (m && m !== fixed) { settings.set({ ...settings.get(), studyMode: m }); renderStudy(view, id, undefined, only); } };
   $('#hintSeg').onclick = e => { if (e.target.dataset.m) { hintMode = e.target.dataset.m; settings.set({ ...settings.get(), hintMode }); show(); } };
   // 切开关不重画页面（进度别丢），只换按钮高亮和提示条
   $('#nextSeg').onclick = e => {
@@ -118,63 +124,79 @@ export async function renderStudy(view, id, given) {
     $('.tips').innerHTML = tips(mode, keys, autoNext);
   };
 
+  // 每题重建答题区（练法可能变了）：输入框 / 四选一 / 认词卡
+  function drawDeck() {
+    root.className = 'study ' + mode;
+    $('#deck').innerHTML = `<div class="hint" id="hint"></div>
+        ${isTyped(mode) ? `<input class="big" id="in" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="">` : ''}
+        ${isPick(mode) ? '<div class="choices" id="choices"></div>' : ''}
+        <div class="answer" id="ans"></div><div class="fb" id="fb"></div>
+        <div class="bar">
+          <button id="prev" title="上一个">‹</button><button id="say">🔊 发音</button>${mode === 'learn' ? '<button id="next" class="primary">记住了，下一个 ⏎</button>' : `<button id="show">答案</button>${isTyped(mode) ? '<button id="submit" class="primary">提交 ⏎</button>' : ''}<button id="next" title="下一个">›</button>`}
+          <label class="chk"><input type="checkbox" id="mark"> 错题本</label>
+        </div>
+        <p class="muted tips">${tips(mode, keys, autoNext)}</p>`;
+    inp = $('#in');
+  }
   function drawStage() {
-    const L = cur().lesson;
-    if (stageId === L.id) return;
-    stageId = L.id;
-    $('#stage').innerHTML = `<img src="${urlOf(L)}">` + (tap
+    const L = cur().lesson, key = L.id + (isTap(mode) ? '/tap' : '/one');
+    if (stageKey === key) return;
+    stageKey = key;
+    $('#stage').innerHTML = `<img src="${urlOf(L)}">` + (isTap(mode)
       ? L.items.map((it, k) => `<div class="box" data-i="${k}" style="${boxStyle(it.box)}"><span class="tag">${esc(it.en)}</span></div>`).join('')
       : '<div class="box sel" id="box"></div>');
   }
   function drawHint(force) {
-    const on = force || hintMode === 'always' || (hintMode === 'wrong' && wrong > 0);
+    const on = force || mode === 'learn' || hintMode === 'always' || (hintMode === 'wrong' && wrong > 0);
     $('#hint').textContent = on ? hintOf() : '···';
     $('#hint').className = 'hint' + (on ? '' : ' blank');
   }
   function show() {
-    const q = cur(), it = q.item, ok = done.has(i);
+    const q = cur(), it = q.item, ok = done.has(i), learn = mode === 'learn';
     $('#prog').textContent = i + 1;
     $('#title').textContent = q.lesson.title;
     $('#bar').style.width = (done.size / n * 100) + '%';
     for (const b of $('#hintSeg').children) b.classList.toggle('on', b.dataset.m === hintMode);
     drawHint();
-    $('#ans').className = 'answer' + (ok ? ' ok' : '');
+    $('#ans').className = 'answer' + (ok && !learn ? ' ok' : '');
     $('#mark').checked = !!settings.get().wrong[keyOf(q)];
     // 揭晓 / 答对后把中文和例句一起给出来：点图模式提示区只有外文，不给中文就等于没学到
     const nOther = otherN(q);
     const extra = (it.sent ? `<div class="sent">${esc(it.sent)}</div><div class="sentZh">${esc(it.sentZh)}</div>` : '') + colHtml(it)
       + (nOther ? `<div class="more"><a href="#/word/${langOf(q.lesson)}/${encodeURIComponent(it.en)}">还在 ${nOther} 课出现过</a></div>` : '');
-    $('#ans').innerHTML = ok || revealed ? `${ok ? '✓ ' : ''}${esc(it.en)} <span class="ipa">${esc(it.ipa)}</span> ${esc(it.pos)} · ${esc(it.zh)}${extra}` : '';
-    if (tap) {
+    $('#ans').innerHTML = ok || revealed || learn ? `${ok && !learn ? '✓ ' : ''}${esc(it.en)} <span class="ipa">${esc(it.ipa)}</span> ${esc(it.pos)} · ${esc(it.zh)}${extra}` : '';
+    $('#fb').textContent = fbText(fbs.get(i));
+    if (isTap(mode)) {
       const L = q.lesson;
       for (const b of $('#stage').querySelectorAll('.box')) {
         const itB = L.items[+b.dataset.i];
-        const qi = items.findIndex(x => x.lesson === L && x.item === itB);
-        b.className = 'box' + (qi >= 0 && done.has(qi) ? ' ok' : '') + (itB === it && (ok || revealed) ? ' sel' : '');
+        const qi = items.findIndex((x, k) => x.lesson === L && x.item === itB && x.mode !== 'learn' && done.has(k));
+        b.className = 'box' + (qi >= 0 ? ' ok' : '') + (itB === it && (ok || revealed) ? ' sel' : '');
       }
     } else $('#box').style.cssText = boxStyle(it.box);
-    if (typed) {
+    if (inp) {
       inp.placeholder = '输入' + LANGS[langOf(q.lesson)].name;
       inp.className = 'big' + (ok ? ' ok' : '');
       inp.value = ok ? (mode === 'col' ? (colOf(q.col.en).answers[0] || '') : it.en) : '';
       inp.readOnly = ok; // 用 readOnly 不用 disabled，焦点留在框里，快捷键才有效
       inp.focus();
     }
-    if (pick) $('#choices').innerHTML = choices.map((c, k) =>
+    if (isPick(mode)) $('#choices').innerHTML = choices.map((c, k) =>
       `<button data-k="${k}" class="${c === it && (ok || revealed) ? 'ok' : bad.has(c) ? 'bad' : ''}" ${ok ? 'disabled' : ''}>${esc(label(c))}</button>`).join('');
   }
   // 换题：干扰项从这道题所在课抽 3 个（按显示文字去重，识别重复框同一个词时不会出两个正确答案）
   function newQuestion() {
-    wrong = 0; revealed = false; bad = new Set();
-    drawStage();
-    if (pick) {
+    wrong = 0; revealed = false; bad = new Set(); mode = cur().mode;
+    drawDeck(); drawStage();
+    if (isPick(mode)) {
       const it = cur().item, seen = new Set([label(it)]);
       const others = shuffle(cur().lesson.items.filter(x => x !== it && !seen.has(label(x)) && seen.add(label(x))));
       choices = shuffle([it, ...others.slice(0, 3)]);
     }
+    if (mode === 'learn' && !done.has(i)) done.set(i, true); // 认词不算答题，看过就算过
     show();
-    if (!inp) $('.study').focus({ preventScroll: true }); // 快捷键挂在 view 上，焦点得在里面
-    if (tap && !done.has(i)) say();
+    if (!inp) root.focus({ preventScroll: true }); // 快捷键挂在 view 上，焦点得在里面
+    if ((isTap(mode) || mode === 'learn') && (mode === 'learn' || !done.has(i))) say();
   }
   // skipDone：答对后自动前进时跳过已答完的，直到剩下的都做完
   const go = (d, skipDone) => {
@@ -183,14 +205,15 @@ export async function renderStudy(view, id, given) {
   };
   // 答完了往下走：跳过已答的，全答完就出结果；没答的题就是普通翻页
   const next = () => !done.has(i) ? go(1) : done.size === n ? finish() : go(1, true);
-  function correct() {
-    const first = wrong === 0 && !revealed;
-    done.set(i, first);
-    if (!first) setBook(keyOf(cur()), true);
-    if (!tap) say(); // 点图模式刚播过，不重复
+  async function correct() {
+    const first = wrong === 0 && !revealed, at = i, q = cur();
+    done.set(at, first);
+    if (!first) setBook(keyOf(q), true);
+    if (!isTap(mode)) say(); // 点图模式刚播过，不重复
     show();
-    const at = i;
-    if (autoNext) setTimeout(() => { if (root.isConnected && i === at) next(); }, 900); // 900ms 内已手动翻页 / 切模式 / 离开就作废
+    // 记忆状态当场写，回来还在这题就把升降显示出来
+    record(q, first).then(f => { fbs.set(at, f); if (root.isConnected && i === at) $('#fb').textContent = fbText(f); }).catch(e => console.warn('进度没存上', e));
+    if (autoNext) setTimeout(() => { if (root.isConnected && i === at) next(); }, 1300); // 期间已手动翻页 / 切模式 / 离开就作废
   }
   function submit() {
     if (done.has(i)) return next();
@@ -209,6 +232,7 @@ export async function renderStudy(view, id, given) {
   // 点图：只看点的位置在不在目标框里，不管碰到的是哪个框——床上的枕头、毯子不再挡住「床」
   const inside = ([y1, x1, y2, x2], x, y) => y >= y1 && y <= y2 && x >= x1 && x <= x2;
   function tapAt(e) {
+    if (!isTap(mode)) return done.has(i) && !autoNext ? next() : undefined;
     if (done.has(i)) return autoNext ? undefined : next(); // 停住模式：答完再点图任何地方 = 下一题（手机上比找 › 顺手）
     const r = $('#stage').getBoundingClientRect(), x = (e.clientX - r.left) / r.width * 1000, y = (e.clientY - r.top) / r.height * 1000;
     if (inside(cur().item.box, x, y)) return correct();
@@ -221,15 +245,19 @@ export async function renderStudy(view, id, given) {
     b.classList.add('bad'); setTimeout(() => b.classList.remove('bad'), 1000);
   }
   function finish() {
-    const first = [...done.values()].filter(Boolean).length;
+    const quizIdx = [...items.keys()].filter(k => items[k].mode !== 'learn');
+    const first = quizIdx.filter(k => done.get(k)).length;
     // 没一次答对的在答题那一刻已进错题本；答对的不自动移出（错完马上再练一遍答对就没了，来不及导 Anki），由下面的勾选框决定
-    const book = settings.get().wrong, missed = items.filter((q, k) => !done.get(k));
-    // 整课练完才有课可归档（错题本混练没有单一课）；整课从头全对才突出，只练一部分全对不算
-    const lesson = id !== 'wrong' && items[0]?.lesson;
-    const archBtn = !lesson ? '' : lesson.archived ? '<button disabled>已归档</button>' : `<button id="arch" class="${!given && first === n ? 'primary' : ''}">归档这一课</button>`;
-    view.innerHTML = `<div class="result"><div class="score">${first} / ${n}</div><p class="muted">一次答对</p>
-      <ul>${items.map((q, k) => `<li><span class="k ${done.get(k) ? 'ok' : 'no'}">${done.get(k) ? '✓' : '△'}</span><b>${esc(q.item.en)}</b><span class="muted">${esc(q.item.zh)}</span><label class="chk"><input type="checkbox" data-key="${esc(keyOf(q))}"${book[keyOf(q)] ? ' checked' : ''}> 错题本</label></li>`).join('')}</ul>
-      <div class="bar"><button id="again" class="primary">再来一遍</button>${missed.length ? `<button id="retry">再练错的 ${missed.length} 个</button>` : ''}${archBtn}<a class="btn" href="#/">回列表</a></div></div>`;
+    const book = settings.get().wrong, missed = quizIdx.filter(k => !done.get(k)).map(k => items[k]);
+    if (quizIdx.length) logDay({ n: quizIdx.length, right: first, new: items.filter(q => q.mode === 'learn').length });
+    const k = streak();
+    // 整课练完才有课可归档（错题本 / 今天混练没有单一课）；整课从头全对才突出，只练一部分全对不算
+    const lesson = !isToday && id !== 'wrong' && items[0]?.lesson;
+    const archBtn = !lesson ? '' : lesson.archived ? '<button disabled>已收起</button>' : `<button id="arch" class="${!given && first === quizN ? 'primary' : ''}">收起这一课</button>`;
+    const fbLine = q => { const f = fbs.get(items.indexOf(q)); return f ? `<span class="lv">${f.before === 0 ? '新学' : !f.first ? '↓' : f.after > f.before ? '↑' : '·'} ${levelName(f.after)} · ${dueText(f.due)}</span>` : ''; };
+    view.innerHTML = `<div class="result"><div class="score">${first} / ${quizIdx.length}</div><p class="muted">一次答对${k ? ` · 🔥 连续学习 ${k} 天` : ''}</p>
+      <ul>${quizIdx.map(k => { const q = items[k]; return `<li><span class="k ${done.get(k) ? 'ok' : 'no'}">${done.get(k) ? '✓' : '△'}</span><b>${esc(q.item.en)}</b><span class="muted">${esc(q.item.zh)}</span>${fbLine(q)}<label class="chk"><input type="checkbox" data-key="${esc(keyOf(q))}"${book[keyOf(q)] ? ' checked' : ''}> 错题本</label></li>`; }).join('')}</ul>
+      <div class="bar">${isToday ? `<a class="btn primary" href="#/study/today${only ? '/' + only : ''}" id="more">再来一组</a>` : '<button id="again" class="primary">再来一遍</button>'}${missed.length ? `<button id="retry">再练错的 ${missed.length} 个</button>` : ''}${archBtn}<a class="btn" href="#/">回首页</a></div></div>`;
     // 勾 = 在错题本；同一个词两个框共用一个键，一起勾一起取消
     view.querySelector('ul').onchange = e => {
       const k = e.target.dataset.key; if (!k) return;
@@ -237,27 +265,34 @@ export async function renderStudy(view, id, given) {
       for (const c of view.querySelectorAll('input[data-key]')) if (c.dataset.key === k) c.checked = e.target.checked;
     };
     const arch = view.querySelector('#arch');
-    if (arch) arch.onclick = async () => { await setArchived(id, true); toast('已收进「已学完」'); location.hash = '#/'; };
-    view.querySelector('#again').onclick = () => renderStudy(view, id, quiz0); // 重练刚才这份题单，错题本练完全对也不会变成空页
+    if (arch) arch.onclick = async () => { await setArchived(id, true); toast('已收起，不再催复习'); location.hash = '#/'; };
+    const again = view.querySelector('#again');
+    if (again) again.onclick = () => renderStudy(view, id, items, only); // 重练刚才这份题单，错题本练完全对也不会变成空页
+    const more = view.querySelector('#more');
+    if (more) more.onclick = e => { e.preventDefault(); renderStudy(view, 'today', undefined, only); }; // hash 没变，手动重进
     const retry = view.querySelector('#retry');
-    if (retry) retry.onclick = () => renderStudy(view, id, missed);
+    if (retry) retry.onclick = () => renderStudy(view, id, missed, only);
   }
-  if (typed) $('#submit').onclick = submit;
-  if (pick) $('#choices').onclick = e => { const k = e.target.dataset.k; if (k) choose(choices[k]); };
-  $('#stage').onclick = tap ? tapAt : () => { if (done.has(i) && !autoNext) next(); };
-  $('#prev').onclick = () => go(-1);
-  $('#next').onclick = next;
-  $('#say').onclick = say;
-  $('#show').onclick = () => { revealed = true; show(); };
-  $('#mark').onchange = e => setBook(keyOf(cur()), e.target.checked);
+  // 答题区每题重建，事件挂在 view 上按 id 分发
+  view.onclick = e => {
+    const t = e.target.closest('button, #stage'); if (!t) return;
+    if (t.id === 'stage') return tapAt(e);
+    if (t.id === 'submit') return submit();
+    if (t.id === 'prev') return go(-1);
+    if (t.id === 'next') return next();
+    if (t.id === 'say') return say();
+    if (t.id === 'show') { revealed = true; return show(); }
+    if (t.dataset.k !== undefined && t.closest('#choices')) return choose(choices[t.dataset.k]);
+  };
+  view.onchange = e => { if (e.target.id === 'mark') setBook(keyOf(cur()), e.target.checked); };
   view.onkeydown = e => {
     if (e.isComposing) return; // 日语 / 韩语输入法选字时的回车不算提交
     const c = comboOf(e); // 先配自定义组合键，再看普通 Enter（用户把 Ctrl+Enter 之类设成快捷键也能用）
-    if (c === keys.say) $('#say').click();
-    else if (c === keys.show) $('#show').click();
+    if (c === keys.say) say();
+    else if (c === keys.show && mode !== 'learn') { revealed = true; show(); }
     else if (c === keys.mark) $('#mark').click();
-    else if (e.key === 'Enter') typed ? submit() : next();
-    else if (pick && /^[1-4]$/.test(e.key) && choices[e.key - 1]) choose(choices[e.key - 1]);
+    else if (e.key === 'Enter') isTyped(mode) ? submit() : next();
+    else if (isPick(mode) && /^[1-4]$/.test(e.key) && choices[e.key - 1]) choose(choices[e.key - 1]);
     else return;
     e.preventDefault();
   };

@@ -1,11 +1,18 @@
 // 公共小工具：IndexedDB 存课程和发音缓存、localStorage 存设置、HTML 转义、提示条
 const open = new Promise((res, rej) => {
-  const r = indexedDB.open('kantu', 1);
-  r.onupgradeneeded = () => { r.result.createObjectStore('lessons', { keyPath: 'id' }); r.result.createObjectStore('audio'); };
-  r.onsuccess = () => res(r.result);
+  const r = indexedDB.open('kantu', 2);
+  // v1：lessons + audio；v2：progress（词级学习进度，见 progress.js）。只补缺的表，老表不动
+  r.onupgradeneeded = () => {
+    const d = r.result, has = n => d.objectStoreNames.contains(n);
+    if (!has('lessons')) d.createObjectStore('lessons', { keyPath: 'id' });
+    if (!has('audio')) d.createObjectStore('audio');
+    if (!has('progress')) d.createObjectStore('progress', { keyPath: 'key' });
+  };
+  r.onsuccess = () => { r.result.onversionchange = () => r.result.close(); res(r.result); }; // 别的标签页升库时让路，不然它永远开不了
   r.onerror = () => rej(r.error);
+  r.onblocked = () => alert('请先关掉其他「看图记词」标签页，再刷新这一页');
 });
-const tx = (store, mode, fn) => open.then(db => new Promise((res, rej) => {
+export const tx = (store, mode, fn) => open.then(db => new Promise((res, rej) => {
   const t = db.transaction(store, mode), req = fn(t.objectStore(store));
   t.oncomplete = () => res(req && req.result);
   t.onerror = () => rej(t.error);

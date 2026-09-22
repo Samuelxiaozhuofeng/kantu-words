@@ -7,6 +7,7 @@ import { renderStudy } from './study.js';
 import { renderWord } from './word.js';
 import { renderGen, queue, retryFailed, clearQueue } from './gen.js';
 import { PRESETS, pingAnki, listDecks, exportWrong } from './anki.js';
+import { prog, buildToday, streak, week, masteredLessons, lessonStat, newPerDay } from './progress.js';
 
 const view = document.getElementById('view');
 
@@ -27,6 +28,16 @@ async function renderList() {
   const inFolder = l => !curFolder || (folderOf(l) || UNGROUPED) === curFolder;
   const shown = tab === 'packs' ? packs : tab === 'done' ? done : mine.filter(inFolder), packLang = settings.get().packLang || 'en';
   const wrongs = wrongEntries(lessons, settings.get().wrong);
+  // 「今天」卡：到期复习 + 新词 + 连续天数；全部掌握的课提示收起
+  const plist = await prog.all(), td = buildToday(lessons, plist), k = streak(), mastered = masteredLessons(lessons, plist);
+  const nothing = !td.due.length && !td.fresh.length;
+  const todayCard = `<div class="today panel">
+    <div class="tleft"><div class="tl">${nothing ? (lessons.some(l => !l.archived && l.items.length) ? '今天的都学完了 🎉' : '先有一课，才有今天') : '今天'}</div>
+      <div class="tn">${nothing ? (td.freshAll ? `<span class="muted">还有 ${td.freshAll} 个新词等着，明天继续；想多学可在设置里调「每日新词」</span>` : '<span class="muted">新建一课，或去内置课程挑一课</span>') : `${td.due.length ? `<b>${td.due.length}</b> 复习` : ''}${td.due.length && td.fresh.length ? ' <span class="muted">+</span> ' : ''}${td.fresh.length ? `<b>${td.fresh.length}</b> 新词` : ''}<span class="muted"> · 约 ${Math.max(1, Math.round((td.due.length + td.fresh.length * 2) / 5))} 分钟</span>`}</div>
+      ${mastered.length ? `<div class="muted">「${esc(mastered[0].title)}」全部掌握了 <button data-arch="${mastered[0].id}" class="mini">收起这一课</button></div>` : ''}</div>
+    <div class="tright"><div class="streak">🔥 ${k} <small>连续天数</small></div><div class="week">${week().map(d => `<i class="${d.on ? 'on' : ''}${d.isToday ? ' now' : ''}" title="${d.day}"></i>`).join('')}</div>
+      ${nothing ? '' : '<a class="btn primary big" href="#/study/today">开始 →</a>'}</div></div>`;
+  const statOf = l => lessonStat(l, plist);
   const urls = new Map(), imgUrl = l => { if (!urls.has(l.id)) urls.set(l.id, URL.createObjectURL(l.image)); return urls.get(l.id); };
   const by = st => queue.filter(j => j.state === st), names = st => by(st).map(j => esc(j.topic)).join('、');
   const genBar = !queue.length ? '' : `<div class="bar genprog"><span>AI 出课：完成 ${by('done').length} / ${queue.length}${by('run').length ? ` · 生成中 ${by('run').length}：${dots(names('run'))}` : ''}${by('wait').length ? ` · 排队 ${by('wait').length}` : ''}${by('fail').length ? ` · 失败 ${by('fail').length}` : ''}</span>
@@ -41,24 +52,25 @@ async function renderList() {
       <div class="ops"><button data-say="${esc(it.en)}" data-lang="${langOf(q.lesson)}">🔊</button><button data-unwrong="${esc(q.key)}">移出</button></div></div>`; }).join('')}</div>`
     : '<div class="empty"><b>错题本是空的</b>练完没一次答对的词会记在这里；答对了不会自动拿掉，在结果页取消勾选、或在这里点「移出」才拿掉。</div>'}`;
   view.innerHTML = `
+    ${todayCard}
     <div class="bar"><a class="btn primary" href="#/edit">＋ 新建课程</a>
-      <span class="seg" id="tabs"><button data-tab="mine" class="${tab === 'mine' ? 'on' : ''}">我的课程 ${mine.length}</button><button data-tab="packs" class="${tab === 'packs' ? 'on' : ''}">内置课程 ${packs.length}</button><button data-tab="done" class="${tab === 'done' ? 'on' : ''}">已学完 ${done.length}</button><button data-tab="wrong" class="${tab === 'wrong' ? 'on' : ''}">错题本 ${wrongs.length}</button></span>
+      <span class="seg" id="tabs"><button data-tab="mine" class="${tab === 'mine' ? 'on' : ''}">我的课程 ${mine.length}</button><button data-tab="packs" class="${tab === 'packs' ? 'on' : ''}">内置课程 ${packs.length}</button><button data-tab="done" class="${tab === 'done' ? 'on' : ''}">已收起 ${done.length}</button><button data-tab="wrong" class="${tab === 'wrong' ? 'on' : ''}">错题本 ${wrongs.length}</button></span>
       ${tab === 'packs' ? `<select id="packLang" title="内置课程用哪种语言">${Object.entries(LANGS).map(([k, L]) => `<option value="${k}" ${k === packLang ? 'selected' : ''}>${L.name}</option>`).join('')}</select>` : ''}
       <span style="flex:1"></span><button id="export">导出备份</button>
       <label class="btn">导入<input type="file" id="import" accept=".json" hidden></label></div>
     ${tab === 'mine' ? genBar : ''}
     ${tab === 'mine' && folders.length && folders[0] !== UNGROUPED ? `<div class="bar"><span class="seg" id="folders"><button data-folder="" class="${curFolder ? '' : 'on'}">全部</button>${folders.map(f => `<button data-folder="${esc(f)}" class="${f === curFolder ? 'on' : ''}">${esc(f)}</button>`).join('')}</span></div>` : ''}
-    ${tab === 'wrong' ? wrongPanel : shown.length ? '' : tab === 'done' ? '<div class="empty"><b>还没有学完的课</b>课卡上点「归档」，或练完一课在结果页点「归档这一课」，就会收到这里。</div>' : tab === 'packs' ? '<div class="empty"><b>内置课程都删掉了</b>去「我的课程」看看自己的课吧。</div>' : '<div class="empty"><b>还没有自己的课程</b>点「新建课程」，传一张图，让 AI 把物品框出来；或者先去「内置课程」玩现成的。</div>'}
-    ${tab === 'wrong' ? '' : `<div class="cards">${shown.map(l => `<div class="card"><a class="pic" href="#/study/${l.id}"><img src="${URL.createObjectURL(l.image)}"><span class="n">${l.items.length ? l.items.length + ' 词' : '待整理'}</span>${langOf(l) === 'en' ? '' : `<span class="n lang">${LANGS[langOf(l)].name}</span>`}</a>
-      <div class="body"><b>${esc(l.title)}</b>
-      <div class="bar"><a class="btn primary" href="#/study/${l.id}">开始学</a><a class="btn" href="#/edit/${l.id}">编辑</a>${l.archived ? `<button data-unarch="${l.id}">放回</button>` : `<button data-arch="${l.id}">归档</button>`}<span style="flex:1"></span><button class="danger" data-del="${l.id}">删</button></div></div></div>`).join('')}</div>`}`;
+    ${tab === 'wrong' ? wrongPanel : shown.length ? '' : tab === 'done' ? '<div class="empty"><b>还没有收起的课</b>课卡上点「收起」，或一课全部掌握后在首页点「收起这一课」，就会收到这里；收起的课不再催复习。</div>' : tab === 'packs' ? '<div class="empty"><b>内置课程都删掉了</b>去「我的课程」看看自己的课吧。</div>' : '<div class="empty"><b>还没有自己的课程</b>点「新建课程」，传一张图，让 AI 把物品框出来；或者先去「内置课程」玩现成的。</div>'}
+    ${tab === 'wrong' ? '' : `<div class="cards">${shown.map(l => { const st = statOf(l), pct = st.total ? Math.round(st.mastered / st.total * 100) : 0; return `<div class="card"><a class="pic" href="#/study/today/${l.id}"><img src="${URL.createObjectURL(l.image)}"><span class="n">${l.items.length ? l.items.length + ' 词' : '待整理'}</span>${langOf(l) === 'en' ? '' : `<span class="n lang">${LANGS[langOf(l)].name}</span>`}${st.due && !l.archived ? `<span class="n due">到期 ${st.due}</span>` : ''}</a>
+      <div class="body"><div class="row"><b>${esc(l.title)}</b><span class="ring" style="--p:${pct}" title="已掌握 ${st.mastered} / ${st.total}"><i>${pct}%</i></span></div>
+      <div class="bar">${l.archived || !l.items.length ? '' : `<a class="btn primary" href="#/study/today/${l.id}">${st.mastered + st.learning ? '继续' : '开始学'}</a>`}<a class="btn" href="#/study/${l.id}">自由练</a><a class="btn" href="#/edit/${l.id}">编辑</a>${l.archived ? `<button data-unarch="${l.id}">放回</button>` : `<button data-arch="${l.id}">收起</button>`}<span style="flex:1"></span><button class="danger" data-del="${l.id}">删</button></div></div></div>`; }).join('')}</div>`}`;
   fitCrops(view);
   view.querySelector('#tabs').onclick = e => { const t = e.target.dataset.tab; if (t) { settings.set({ ...settings.get(), homeTab: t }); renderList(); } };
   const fl = view.querySelector('#folders');
   if (fl) fl.onclick = e => { const f = e.target.dataset.folder; if (f !== undefined) { curFolder = f; renderList(); } };
   const sel = view.querySelector('#packLang');
   if (sel) sel.onchange = async () => {
-    if (!confirm(`把 ${packs.length} 课内置课程换成${LANGS[sel.value].name}版？你在内置课上改过的词会被换掉。`)) { sel.value = packLang; return; }
+    if (!confirm(`把 ${packs.length} 课内置课程换成${LANGS[sel.value].name}版？你在内置课上改过的词会被换掉，这些课的学习进度也会清零。`)) { sel.value = packLang; return; }
     try { await switchPacks(sel.value); toast(`内置课程已换成${LANGS[sel.value].name}`); renderList(); }
     catch (e) { alert('没换成，检查一下网络：' + e.message); sel.value = packLang; }
   };
@@ -89,15 +101,19 @@ async function renderList() {
     const arch = e.target.dataset.arch || e.target.dataset.unarch;
     if (arch) { await setArchived(arch, !!e.target.dataset.arch); renderList(); return; }
     const id = e.target.dataset.del;
-    if (id && confirm('删除这一课？')) { await db.del(id); renderList(); }
+    if (id && confirm('删除这一课？学习进度一起删。')) { await db.del(id); await prog.delPrefix(id + '|'); renderList(); }
   };
   view.querySelector('#export').onclick = async () => {
-    const out = await Promise.all(lessons.map(async l => ({ ...l, image: await blobToDataUrl(l.image) })));
+    // v2 备份：课程 + 学习进度 + 错题本 + 每日日志；旧版本导入这份会报「导入失败」，得先更新 App
+    const out = { v: 2, lessons: await Promise.all(lessons.map(async l => ({ ...l, image: await blobToDataUrl(l.image) }))), progress: await prog.all(), wrong: settings.get().wrong, days: settings.get().days || {} };
     download(`看图记词-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(out));
   };
   view.querySelector('#import').onchange = async e => {
     try {
-      const arr = JSON.parse(await e.target.files[0].text());
+      const raw = JSON.parse(await e.target.files[0].text());
+      // 旧备份是课程数组；v2 是对象 { lessons, progress, wrong, days }
+      const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.lessons) ? raw.lessons : null;
+      if (!arr) throw new Error('这不是看图记词的备份文件');
       // 缺字段的记录跳过并补齐默认值，不然一条坏数据会把整个列表页搞挂
       const ok = arr.filter(l => l && l.id && typeof l.image === 'string' && Array.isArray(l.items));
       for (const l of ok) await db.put({
@@ -108,7 +124,16 @@ async function renderList() {
           return it;
         }),
       });
-      toast(`导入 ${ok.length} 课` + (ok.length < arr.length ? `，跳过 ${arr.length - ok.length} 条坏数据` : '')); renderList();
+      let np = 0;
+      if (!Array.isArray(raw)) {
+        // 进度：同一个词保留更晚的那条；错题本：并集（备份里的错题会加回来）；日志：同一天取大
+        const pl = (raw.progress || []).filter(p => p && typeof p.key === 'string' && Number.isInteger(p.level) && p.level >= 0 && p.level <= 6 && Number.isFinite(p.due));
+        if (pl.length) { await prog.merge(pl); np = pl.length; }
+        const s0 = settings.get(), days = { ...(s0.days || {}) };
+        for (const [d, v] of Object.entries(raw.days || {})) days[d] = { n: Math.max(v.n || 0, days[d]?.n || 0), new: Math.max(v.new || 0, days[d]?.new || 0), right: Math.max(v.right || 0, days[d]?.right || 0) };
+        settings.set({ ...s0, days, wrong: { ...(raw.wrong || {}), ...s0.wrong } });
+      }
+      toast(`导入 ${ok.length} 课${np ? `、${np} 条学习进度` : ''}` + (ok.length < arr.length ? `，跳过 ${arr.length - ok.length} 条坏数据` : '')); renderList();
     } catch (err) { alert('导入失败：' + err.message); }
   };
 }
@@ -160,6 +185,7 @@ async function switchPacks(lang) {
     const l = await db.get(p.id);
     if (l) await db.put({ ...l, items: packItems(p, lang), lang });
   }
+  for (const p of packs) await prog.delPrefix(p.id + '|'); // 词全换了，原来的进度对不上号；只清 index.json 里这几课，不按前缀误伤同名前缀的自建课
   settings.set({ ...settings.get(), packLang: lang });
 }
 
@@ -168,7 +194,14 @@ function renderSettings() {
   const preset = PRESETS[s.ankiPreset] ? s.ankiPreset : 'pic', keys = keysOf();
   view.innerHTML = `
     <div style="max-width:560px;margin:0 auto">
-      <div class="bar"><span class="seg" id="setTabs"><button data-stab="api" class="on">接口</button><button data-stab="anki">Anki</button><button data-stab="keys">快捷键</button></span></div>
+      <div class="bar"><span class="seg" id="setTabs"><button data-stab="api" class="on">接口</button><button data-stab="anki">Anki</button><button data-stab="learn">学习</button><button data-stab="keys">快捷键</button></span></div>
+      <div id="pane-learn" hidden>
+      <div class="panel">
+      <h3 style="margin-top:0">每天学多少</h3>
+      <p class="muted">「今天」里每天最多给几个新词；到期复习的词不受限制。学得吃力就调小，想快就调大。</p>
+      <label class="field">每日新词 <input id="newPerDay" type="number" min="0" max="100" value="${newPerDay()}"></label>
+      </div>
+      </div>
       <div id="pane-api">
       <div class="panel">
       <h3 style="margin-top:0">AI 接口（OpenAI 兼容）</h3>
@@ -227,6 +260,7 @@ function renderSettings() {
     ankiDeck: $('#ankiNew').value.trim() || $('#ankiDeck').value || s.ankiDeck || '',
     ankiPreset: $('#ankiPreset').value || 'pic',
     genParallel: (n => Number.isInteger(n) && n >= 1 && n <= 8 ? n : 3)(+$('#genParallel').value),
+    newPerDay: (n => Number.isInteger(n) && n >= 0 && n <= 100 ? n : 10)(+$('#newPerDay').value),
     keys,
   });
   // 录快捷键：只认带修饰键的组合（或 F 键），光按修饰键不算；和另一个撞了就提醒
@@ -291,9 +325,9 @@ function route() {
   cur = location.hash;
   const parts = cur.slice(1).split('/');
   const page = parts[1], id = parts[2];
-  view.onclick = view.onkeydown = null;
+  view.onclick = view.onkeydown = view.onchange = null;
   if (page === 'edit') renderEditor(view, id);
-  else if (page === 'study') renderStudy(view, id);
+  else if (page === 'study') renderStudy(view, id, undefined, parts[3]); // #/study/today/<课程id> 只练那一课
   else if (page === 'settings') renderSettings();
   else if (page === 'gen') renderGen(view);
   else if (page === 'word') renderWord(view, id, decodeURIComponent(parts.slice(3).join('/')));
