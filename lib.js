@@ -53,6 +53,9 @@ export const LANGS = {
   de: { name: '德语', voice: 'de-DE-KatjaNeural', tag: 'de-DE', ai: 'German', ipa: 'IPA', ipaName: '音标', articles: /^(der|die|das|ein|eine)\s+/ },
   es: { name: '西班牙语', voice: 'es-ES-ElviraNeural', tag: 'es-ES', ai: 'Spanish', ipa: 'IPA', ipaName: '音标', articles: /^(el|la|los|las|un|una)\s+/ },
 };
+// 学习者水平（全局设置 settings.level）：basic 一个字都不加提示词，老用户零变化；mid / high 让 AI 出课的三步（列子话题、画图、识词）都往难推
+export const LEVELS = { basic: '基础', mid: '进阶（约 B1–B2）', high: '高阶（约 C1+）' };
+export const levelOf = () => Object.hasOwn(LEVELS, settings.get().level) ? settings.get().level : 'basic';
 export const langOf = lesson => LANGS[lesson?.lang] ? lesson.lang : 'en'; // 老课、内置课、旧备份没这个字段，一律英语
 // 课程文件夹：「AI 出课」的大类，也是编辑页下拉的选项；folder 缺省 / 空串当未分组，不按这张表校验（老数据改名不丢）
 export const FOLDERS = ['家居', '厨房', '衣物', '食物', '交通', '学校', '办公', '动物', '自然', '运动', '医疗', '城市'];

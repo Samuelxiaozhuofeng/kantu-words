@@ -1,5 +1,5 @@
 // 入口：hash 路由、课程列表、设置页、导入导出、注册 PWA
-import { db, esc, dots, settings, toast, LANGS, langOf, folderOf, setArchived, wrongEntries, KEYS, KEY_NAMES, keysOf, comboOf, keyLabel, colOf, fitCrops } from './lib.js';
+import { db, esc, dots, settings, toast, LANGS, LEVELS, levelOf, langOf, folderOf, setArchived, wrongEntries, KEYS, KEY_NAMES, keysOf, comboOf, keyLabel, colOf, fitCrops } from './lib.js';
 import { listModels } from './ai.js';
 import { speak } from './tts.js';
 import { renderEditor } from './editor.js';
@@ -216,6 +216,11 @@ function renderSettings() {
       <p class="muted">「今天」里每天最多给几个新词；到期复习的词不受限制。学得吃力就调小，想快就调大。</p>
       <label class="field">每日新词 <input id="newPerDay" type="number" min="0" max="100" value="${newPerDay()}"></label>
       </div>
+      <div class="panel">
+      <h3 style="margin-top:0">我的水平</h3>
+      <p class="muted">AI 出课和「AI 识别」按这个水平挑词：基础 = 现在这样；进阶跳过入门词、用更精确的叫法（armchair 不是 chair）并标零件和材质；高阶只出 B2 以上的词。内置 12 课不受影响。</p>
+      <label class="field">水平 <select id="level">${Object.entries(LEVELS).map(([k, v]) => `<option value="${k}" ${k === levelOf() ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+      </div>
       </div>
       <div id="pane-api">
       <div class="panel">
@@ -276,6 +281,7 @@ function renderSettings() {
     ankiPreset: $('#ankiPreset').value || 'pic',
     genParallel: (n => Number.isInteger(n) && n >= 1 && n <= 8 ? n : 3)(+$('#genParallel').value),
     newPerDay: (n => Number.isInteger(n) && n >= 0 && n <= 100 ? n : 10)(+$('#newPerDay').value),
+    level: LEVELS[$('#level').value] ? $('#level').value : 'basic',
     keys,
   });
   // 录快捷键：只认带修饰键的组合（或 F 键），光按修饰键不算；和另一个撞了就提醒
