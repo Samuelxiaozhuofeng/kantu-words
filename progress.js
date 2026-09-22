@@ -43,16 +43,18 @@ export const record = (q, first) => {
   }).then(() => fb);
 };
 
-// 按熟练度选练法：刚认识的选目标语言的词 / 听音点图，学习中打单词，掌握了考句子 / 搭配（没有就打单词）
+// 按熟练度选练法——认 → 指 → 拼 → 说 → 用：刚认识的选词 / 听音点图，学习中打单词，4 级这一关必须「说出来」才升到已掌握，掌握后轮换句子 / 搭配 / 说
 const hasCol = it => (it.col || []).some(c => c && colOf(c.en).answers.length);
 export function modeFor(level, it) {
   if (level <= 1) return Math.random() < 0.5 ? 'pickEn' : 'tap'; // 新词考的是目标语言的词，不出「选中文」（自由练里仍可手选）
   if (level <= 3) return 'type';
-  return it.sent ? 'sent' : hasCol(it) ? 'col' : 'type';
+  if (level === 4) return 'speak';
+  const pool = ['speak', 'type', ...(it.sent ? ['sent'] : []), ...(hasCol(it) ? ['col'] : [])];
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 // 每日日志：settings.days = { 'YYYY-MM-DD': { n, new, right, modes? } }；modes = { type: { n, right }, ... }，learn 不记；老日子没这字段读时当 {}
-const MODE_KEYS = { type: 1, tap: 1, sent: 1, pickEn: 1, pickZh: 1, col: 1 };
+const MODE_KEYS = { type: 1, tap: 1, sent: 1, pickEn: 1, pickZh: 1, col: 1, speak: 1, palace: 1, miss: 1 };
 export const days = () => settings.get().days || {};
 export const logDay = (add) => {
   const s = settings.get(), d = today(), all = { ...(s.days || {}) }, cur = all[d] || { n: 0, new: 0, right: 0 };
@@ -67,13 +69,20 @@ export const logDay = (add) => {
   all[d] = { ...cur, n: cur.n + (add.n || 0), new: (cur.new || 0) + (add.new || 0), right: (cur.right || 0) + (add.right || 0), modes };
   settings.set({ ...s, days: all });
 };
-// 连续天数：从今天（今天没学就从昨天）往前数有记录的日子
-export const streak = (all = days()) => {
-  let n = 0, k = all[today()] ? 0 : 1;
-  while (all[today(daysAgo(k))]) { n++; k++; }
-  return n;
-};
-export const week = (all = days()) => Array.from({ length: 7 }, (_, k) => { const d = today(daysAgo(6 - k)); return { day: d, on: !!all[d], isToday: k === 6 }; });
+// 连续天数：从今天（今天没学就从昨天）往前数学过的日子。冻结卡：漏掉的单独一天自动冻结、不算断，但 7 天里只冻一次；连漏两天才断
+function run(all) {
+  let n = 0, k = all[today()] ? 0 : 1, lastMiss = -99;
+  const frozen = new Set();
+  for (;; k++) {
+    const d = today(daysAgo(k));
+    if (all[d]) { n++; continue; }
+    // 漏的这天前一天学过、7 天内没冻过，且后面有人接上（已经数到学过的日子，或漏的就是昨天、今天还来得及）
+    if ((n || k === 1) && k - lastMiss >= 7 && all[today(daysAgo(k + 1))]) { lastMiss = k; frozen.add(d); continue; }
+    return { n, frozen };
+  }
+}
+export const streak = (all = days()) => run(all).n;
+export const week = (all = days()) => { const { frozen } = run(all); return Array.from({ length: 7 }, (_, k) => { const d = today(daysAgo(6 - k)); return { day: d, on: !!all[d], ice: frozen.has(d), isToday: k === 6 }; }); };
 export const newPerDay = () => { const n = +settings.get().newPerDay; return Number.isInteger(n) && n >= 0 ? n : 10; };
 
 // 今天的题单：到期的复习 + 新词（限每日上限，减掉今天已学的）。only 给了就只看那一课；归档课不进来

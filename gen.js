@@ -88,7 +88,7 @@ export async function renderGen(view) {
     try {
       const l = await makeLesson(topic, path[0] || '', lang, levelOf(), s => btn.innerHTML = dots(s));
       toast(`「${l.title}」已生成，${l.items.length} 个词`);
-      if (location.hash === '#/gen') location.hash = '#/'; // 用户已经去别处了就别把人拽回首页
+      if (location.hash === '#/gen') location.hash = '#/scene/' + l.id; // 用户已经去别处了就别把人拽过去
     } catch (e) { alert(e.message); btn.disabled = false; btn.textContent = old; }
   }
 
@@ -111,10 +111,9 @@ export async function renderGen(view) {
     if (e.target.id === 'pickClear') { picked.clear(); drawBar(); view.querySelectorAll('[data-pick]').forEach(c => c.checked = false); }
     if (e.target.id === 'genAll' && picked.size) {
       enqueue([...picked.values()].map(j => ({ ...j, lang, level: levelOf() })));
-      toast(`已排队 ${picked.size} 课，回首页看进度`);
+      toast(`已排队 ${picked.size} 课，在世界页看进度`);
       picked.clear();
-      settings.set({ ...settings.get(), homeTab: 'mine' }); // 进度栏在「我的课程」标签下，新用户默认停在内置课程会看不到
-      location.hash = '#/';
+      location.hash = '#/world';
     }
   };
   $('#lang').onchange = e => { lang = e.target.value; settings.set({ ...settings.get(), lastLang: lang }); };

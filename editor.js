@@ -7,6 +7,10 @@ const pct = v => (v / 10).toFixed(2) + '%';
 // 小框叠在大框上面，不然点不到被衣柜包住的裙子
 export const boxStyle = ([y1, x1, y2, x2]) => `left:${pct(x1)};top:${pct(y1)};width:${pct(x2 - x1)};height:${pct(y2 - y1)};z-index:${1000 - Math.round((x2 - x1) * (y2 - y1) / 1000)}`;
 
+// 拍一拍：首页 / 世界页选了照片就带着它进新建页，填过 Key 就顺手识别
+let photo = null;
+export const withPhoto = blob => { photo = blob; location.hash = '#/edit'; };
+
 export async function renderEditor(view, id) {
   const lesson = (id && await db.get(id)) || { id: crypto.randomUUID(), title: '', image: null, items: [], created: Date.now(), lang: settings.get().lastLang };
   lesson.lang = langOf(lesson); // 老课没这个字段：当英语，保存时写进去
@@ -160,13 +164,20 @@ export async function renderEditor(view, id) {
     await db.put(lesson);
     view.dirty = false;
     toast('已保存');
-    location.hash = '#/';
+    location.hash = '#/scene/' + lesson.id;
   };
   $('#title').oninput = touch;
   // 换语种：发音立刻跟着变，词表要再点「AI 识别」才换；记住上次选的，常学一种语言就不用每次点
   $('#lang').onchange = e => { lesson.lang = e.target.value; settings.set({ ...settings.get(), lastLang: lesson.lang }); touch(); drawPanel(); };
   if (!isPack) $('#folder').onchange = e => { lesson.folder = e.target.value; touch(); };
   drawStage(); drawPanel();
+  if (!id && photo) {
+    const b = photo; photo = null;
+    try { await setImage(b); } catch (err) { return alert('这张图打不开：' + err.message); }
+    const c = settings.get();
+    if (c.apiUrl && c.apiKey && c.visionModel) $('#detect').click();
+    else toast('去「我 → 接口」填好 AI，就能自动框出物品；也可以手动加框');
+  }
 }
 
 async function busy(btn, label, fn) {

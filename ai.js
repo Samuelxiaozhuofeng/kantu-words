@@ -140,3 +140,49 @@ export async function generateImage(topic, level = levelOf()) {
   const r = await fetch(d.b64_json ? 'data:image/png;base64,' + d.b64_json : d.url);
   return r.blob();
 }
+
+// 场景小故事和描述点评都让 AI 用「词号」引用这课的词（从 1 数），不让它复述词——引用能校验，复述会改写、漏掉
+const numbered = items => items.map((it, k) => `${k + 1}. ${it.en}（${it.zh}）`).join('\n');
+const idxOf = (arr, n) => [...new Set((Array.isArray(arr) ? arr : []).map(Number).filter(k => Number.isInteger(k) && k >= 1 && k <= n).map(k => k - 1))];
+const STORY_LEVEL = { basic: 'Use very simple words and short present-tense sentences (A1–A2).', mid: 'Use natural everyday language at B1–B2 level.', high: 'Use rich, idiomatic language at C1 level.' };
+// 听故事：看图写 5–8 句小故事，每句用上 1–3 个这课的词，words 给词号；校验后 [{ en, zh, words: [下标] }]
+export const storyOf = (raw, n) => (Array.isArray(raw) ? raw : []).filter(l => l && typeof l.en === 'string' && l.en.trim()).map(l => ({ en: l.en.trim(), zh: String(l.zh || ''), words: idxOf(l.words, n) }));
+export async function writeStory(lesson, level = levelOf()) {
+  const s = cfg();
+  if (!s.visionModel) throw new Error('请先在「设置」里选识别模型');
+  const L = LANGS[lesson.lang] || LANGS.en;
+  const j = await call('/chat/completions', {
+    model: s.visionModel, max_tokens: 4000,
+    messages: [{ role: 'user', content: [{ type: 'text', text: `Write a short, warm little story in ${L.ai} that happens in this picture, for a language learner. 5 to 8 sentences. ${STORY_LEVEL[level] || STORY_LEVEL.basic}
+Each sentence uses 1–3 of these numbered words (as they appear in the picture), and together the story should use as many of them as possible:
+${numbered(lesson.items)}
+Return ONLY a JSON array, no prose, no markdown. Each element: {"en":"<one ${L.ai} sentence>","zh":"<简体中文翻译>","words":[<numbers of the listed words used in this sentence>]}` }, { type: 'image_url', image_url: { url: await toJpeg(lesson.image) } }] }],
+  });
+  const story = storyOf(parseArr(j.choices[0].message.content), lesson.items.length);
+  if (!story.length) throw new Error('AI 没写出故事，再试一次');
+  return story;
+}
+// 描述这张图：点评学习者写的话。used = 用对了的词号；fixes = 改错；better = 更地道的整段
+export const reviewOf = (raw, n) => ({
+  used: idxOf(raw?.used, n),
+  fixes: (Array.isArray(raw?.fixes) ? raw.fixes : []).filter(f => f && typeof f.from === 'string' && typeof f.to === 'string').slice(0, 8).map(f => ({ from: f.from, to: f.to, why: String(f.why || '') })),
+  better: String(raw?.better || ''), betterZh: String(raw?.betterZh || ''), comment: String(raw?.comment || ''),
+});
+export async function reviewDescription(lesson, text, level = levelOf()) {
+  const s = cfg();
+  if (!s.visionModel) throw new Error('请先在「设置」里选识别模型');
+  const L = LANGS[lesson.lang] || LANGS.en;
+  const j = await call('/chat/completions', {
+    model: s.visionModel, max_tokens: 3000,
+    messages: [{ role: 'user', content: [{ type: 'text', text: `A learner of ${L.ai} (level: ${level === 'basic' ? 'beginner' : level === 'mid' ? 'intermediate B1–B2' : 'advanced C1+'}) described this picture. Be an encouraging, precise tutor.
+Numbered words of this picture:
+${numbered(lesson.items)}
+Learner's text:
+"""${text}"""
+Return ONLY a JSON object, no prose, no markdown:
+{"used":[<numbers of listed words the learner used correctly for the right object>],"fixes":[{"from":"<exact wrong fragment from the learner's text>","to":"<corrected fragment>","why":"<一句中文说明>"}],"better":"<a natural ${L.ai} version of what the learner meant, same length or a bit longer, using more of the listed words>","betterZh":"<better 的中文>","comment":"<一句中文鼓励 + 一个最值得改进的点>"}` }, { type: 'image_url', image_url: { url: await toJpeg(lesson.image) } }] }],
+  });
+  const c = j.choices[0].message.content;
+  let raw; try { raw = JSON.parse(c.slice(c.indexOf('{'), c.lastIndexOf('}') + 1)); } catch { throw new Error('模型没按格式返回：' + c.slice(0, 200)); }
+  return reviewOf(raw, lesson.items.length);
+}

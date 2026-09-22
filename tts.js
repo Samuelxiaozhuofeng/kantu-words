@@ -16,17 +16,18 @@ export async function getAudio(text, lang = 'en') {
   return blob;
 }
 
+// 返回的 Promise 在读完时才结束：听故事要一句读完再亮下一句；别处不 await 照旧
 export async function speak(text, lang = 'en') {
   const L = LANGS[lang] || LANGS.en;
+  let url;
   try {
-    const blob = await getAudio(text, lang);
-    const url = URL.createObjectURL(blob), a = new Audio(url);
-    a.onended = () => URL.revokeObjectURL(url);
-    await a.play();
+    url = URL.createObjectURL(await getAudio(text, lang));
+    const a = new Audio(url);
+    await new Promise((res, rej) => { a.onended = res; a.onerror = () => rej(new Error('播放失败')); a.play().catch(rej); });
   } catch (e) {
     console.warn('Edge TTS 失败，降级系统朗读', e);
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text); u.lang = L.tag;
-    speechSynthesis.speak(u);
-  }
+    await new Promise(res => { u.onend = u.onerror = res; speechSynthesis.speak(u); });
+  } finally { if (url) URL.revokeObjectURL(url); }
 }

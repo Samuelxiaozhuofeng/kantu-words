@@ -25,12 +25,14 @@ export const db = {
   audioGet: k => tx('audio', 'readonly', s => s.get(k)),
   audioPut: (k, v) => tx('audio', 'readwrite', s => s.put(v, k)),
 };
-// 归档 / 放回：只动 archived 一个字段，其他原样；放回就把字段删掉，跟老课一个样。读和写放同一个事务里，别拿旧快照盖掉别处刚存的
-export const setArchived = (id, on) => tx('lessons', 'readwrite', s => {
+// 改一课的某几个字段：读和写放同一个事务里，别拿旧快照盖掉别处刚存的
+export const patchLesson = (id, fn) => tx('lessons', 'readwrite', s => {
   const r = s.get(id);
-  r.onsuccess = () => { const l = r.result; if (!l) return; if (on) l.archived = Date.now(); else delete l.archived; s.put(l); };
+  r.onsuccess = () => { const l = r.result; if (!l) return; fn(l); s.put(l); };
   return r;
 });
+// 归档 / 放回：只动 archived 一个字段；放回就把字段删掉，跟老课一个样
+export const setArchived = (id, on) => patchLesson(id, l => { if (on) l.archived = Date.now(); else delete l.archived; });
 export const settings = {
   get: () => ({ voice: 'en-US-JennyNeural', hintMode: 'always', studyMode: 'type', wrong: {}, ...JSON.parse(localStorage.kantu || '{}') }),
   set: o => localStorage.kantu = JSON.stringify(o),
@@ -70,6 +72,25 @@ const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
 const KEY_LABELS = { Ctrl: MAC ? '⌃' : 'Ctrl', Meta: MAC ? '⌘' : 'Win', Alt: MAC ? '⌥' : 'Alt', Shift: MAC ? '⇧' : 'Shift', Quote: "'", Semicolon: ';', Slash: '/', Period: '.', Comma: ',', BracketLeft: '[', BracketRight: ']', Backslash: '\\', Minus: '-', Equal: '=', Backquote: '`', Space: '空格' };
 export const keyParts = combo => combo.split('+').map(k => KEY_LABELS[k] || k.replace(/^(Key|Digit|Arrow)/, ''));
 export const keyLabel = combo => keyParts(combo).join(MAC ? ' ' : '+');
+// 点图命中：点的位置落在哪些框里，取面积最小的那个（床上的枕头优先于床）。学习页点错提示、场景页探索共用
+export const inside = ([y1, x1, y2, x2], x, y) => y >= y1 && y <= y2 && x >= x1 && x <= x2;
+const area = ([y1, x1, y2, x2]) => (y2 - y1) * (x2 - x1);
+export const hitAt = (items, x, y) => items.map((it, k) => [it, k]).filter(([it]) => inside(it.box, x, y)).sort((a, b) => area(a[0].box) - area(b[0].box))[0];
+// 答对 / 答错的一声 + 手机轻震；设置里能关（settings.sfx === false）
+let ac;
+export function ding(ok) {
+  if (settings.get().sfx === false) return;
+  try {
+    ac ||= new AudioContext();
+    const o = ac.createOscillator(), g = ac.createGain(), t = ac.currentTime;
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(ok ? 660 : 196, t);
+    if (ok) o.frequency.setValueAtTime(990, t + .09);
+    g.gain.setValueAtTime(.18, t); g.gain.exponentialRampToValueAtTime(.001, t + (ok ? .32 : .22));
+    o.connect(g).connect(ac.destination); o.start(t); o.stop(t + .34);
+  } catch {}
+  navigator.vibrate?.(ok ? 12 : [25, 40, 25]);
+}
 export const dots = s => `${s}<span class="dots"><i>.</i><i>.</i><i>.</i></span>`; // 「生图中」+ 三个轮流闪的点，等 AI 的地方都用它
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export function toast(msg, ms = 2500) {

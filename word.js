@@ -42,7 +42,7 @@ export async function renderWord(view, lang, word) {
         const it = h.item, L = h.lesson;
         return `<div class="wcard">
           <div class="crop"><img src="${imgUrl(L)}" data-box="${it.box.join(',')}"></div>
-          <div class="info"><b><a href="#/study/${L.id}">${esc(L.title)}</a></b>
+          <div class="info"><b><a href="#/scene/${L.id}">${esc(L.title)}</a></b>
             <a class="btn" href="#/edit/${L.id}">编辑</a>
             ${it.sent ? `<div class="sent">${esc(it.sent)}</div><div class="sentZh">${esc(it.sentZh)}</div>` : ''}</div>
         </div>`;
