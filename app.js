@@ -1,5 +1,5 @@
 // 入口：hash 路由、底部四个标签（今天 / 世界 / 词库 / 我）、「我」页（设置 + 备份）、注册 PWA
-import { db, esc, settings, toast, LEVELS, levelOf, KEYS, KEY_NAMES, keysOf, comboOf, keyLabel } from './lib.js';
+import { db, tx, esc, settings, toast, LEVELS, levelOf, KEYS, KEY_NAMES, keysOf, comboOf, keyLabel } from './lib.js';
 import { listModels } from './ai.js';
 import { speak } from './tts.js';
 import { renderEditor } from './editor.js';
@@ -26,44 +26,61 @@ async function exportBackup() {
   const out = { v: 2, lessons: await Promise.all(lessons.map(async l => ({ ...l, image: await blobToDataUrl(l.image) }))), progress: await prog.all(), wrong: settings.get().wrong, days: settings.get().days || {} };
   download(`看图记词-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(out));
 }
+// 先把整份备份校验、整理完（含图片解码），全部没问题才开始写库：坏备份要么整份不动，要么只跳过坏的那几条，不会写一半再报错
+const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
+const num = v => typeof v === 'number' && Number.isFinite(v) ? v : 0;
 async function importBackup(file) {
-  const raw = JSON.parse(await file.text());
+  let raw;
+  try { raw = JSON.parse(await file.text()); } catch { throw new Error('文件不是有效的 JSON'); }
   // 旧备份是课程数组；v2 是对象 { lessons, progress, wrong, days }
   const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.lessons) ? raw.lessons : null;
   if (!arr) throw new Error('这不是看图记词的备份文件');
-  // 缺字段的记录跳过并补齐默认值，不然一条坏数据会把整个列表页搞挂
-  const ok = arr.filter(l => l && l.id && typeof l.image === 'string' && Array.isArray(l.items));
-  for (const l of ok) await db.put({
-    title: '未命名', created: Date.now(), ...l, image: await (await fetch(l.image)).blob(),
-    items: l.items.filter(i => i && i.en && Array.isArray(i.box) && i.box.length === 4).map(i => {
-      const it = { zh: '', ipa: '', pos: '', alts: [], sent: '', sentZh: '', col: [], ...i };
-      it.col = Array.isArray(it.col) ? it.col.filter(c => c && typeof c.en === 'string') : [];
-      return it;
-    }),
-  });
-  let np = 0;
-  if (!Array.isArray(raw)) {
-    // 进度：同一个词保留更晚的那条；错题本：并集（备份里的错题会加回来）；日志：同一天取大
-    const pl = (raw.progress || []).filter(p => p && typeof p.key === 'string' && Number.isInteger(p.level) && p.level >= 0 && p.level <= 6 && Number.isFinite(p.due) && ['seen', 'right', 'wrong'].every(k => p[k] == null || Number.isFinite(p[k])));
-    if (pl.length) { await prog.merge(pl); np = pl.length; }
-    const s0 = settings.get(), days = { ...(s0.days || {}) };
-    for (const [d, v] of Object.entries(raw.days || {})) {
-      const loc = days[d] || {};
-      const row = { ...loc, n: Math.max(v.n || 0, loc.n || 0), new: Math.max(v.new || 0, loc.new || 0), right: Math.max(v.right || 0, loc.right || 0) };
-      const bm = v && typeof v.modes === 'object' && !Array.isArray(v.modes) ? v.modes : null;
-      if (bm) {
-        const modes = { ...(typeof loc.modes === 'object' && loc.modes && !Array.isArray(loc.modes) ? loc.modes : {}) };
-        for (const [k, mv] of Object.entries(bm)) {
-          if (!mv || typeof mv !== 'object' || typeof mv.n !== 'number' || typeof mv.right !== 'number') continue;
-          const prev = modes[k];
-          modes[k] = { n: Math.max(mv.n, prev && typeof prev.n === 'number' ? prev.n : 0), right: Math.max(mv.right, prev && typeof prev.right === 'number' ? prev.right : 0) };
+  // 课程：缺字段、图片不是图片 data URL 或解不开的跳过，其余补齐默认值
+  const ok = [];
+  for (const l of arr) {
+    if (!isObj(l) || !l.id || typeof l.id !== 'string' || l.id.includes('|') || typeof l.image !== 'string' || !l.image.startsWith('data:image/') || !Array.isArray(l.items)) continue;
+    let image;
+    try { image = await (await fetch(l.image)).blob(); } catch { continue; }
+    ok.push({
+      title: '未命名', created: Date.now(), ...l, image,
+      items: l.items.filter(i => isObj(i) && i.en && Array.isArray(i.box) && i.box.length === 4).map(i => {
+        const it = { zh: '', ipa: '', pos: '', alts: [], sent: '', sentZh: '', col: [], ...i };
+        it.col = Array.isArray(it.col) ? it.col.filter(c => c && typeof c.en === 'string') : [];
+        return it;
+      }),
+    });
+  }
+  const v2 = !Array.isArray(raw);
+  // 进度：同一个词保留更晚的那条（merge 里比）
+  const pl = v2 && Array.isArray(raw.progress) ? raw.progress.filter(p => isObj(p) && typeof p.key === 'string' && Number.isInteger(p.level) && p.level >= 0 && p.level <= 6 && Number.isFinite(p.due) && ['seen', 'right', 'wrong'].every(k => p[k] == null || Number.isFinite(p[k]))) : [];
+  // 日志：只留像样的日子（日期键、对象值）；和本地的合并放到写入那一刻，用最新的设置
+  const bdays = Object.entries(v2 && isObj(raw.days) ? raw.days : {}).filter(([d, v]) => isObj(v) && /^\d{4}-\d{2}-\d{2}$/.test(d));
+  const mergeDays = local => {
+    const days = { ...local };
+    for (const [d, v] of bdays) {
+      const loc = isObj(days[d]) ? days[d] : {};
+      const row = { ...loc, n: Math.max(num(v.n), num(loc.n)), new: Math.max(num(v.new), num(loc.new)), right: Math.max(num(v.right), num(loc.right)) };
+      if (isObj(v.modes)) {
+        const modes = { ...(isObj(loc.modes) ? loc.modes : {}) };
+        for (const [k, mv] of Object.entries(v.modes)) {
+          if (!isObj(mv) || typeof mv.n !== 'number' || typeof mv.right !== 'number') continue;
+          const prev = isObj(modes[k]) ? modes[k] : {};
+          modes[k] = { n: Math.max(mv.n, num(prev.n)), right: Math.max(mv.right, num(prev.right)) };
         }
         row.modes = modes;
       }
       days[d] = row;
     }
-    settings.set({ ...s0, days, wrong: { ...(raw.wrong || {}), ...s0.wrong } });
-  }
+    return days;
+  };
+  // 错题本：并集（备份里的错题会加回来），只收「课程id|词」→ 时间戳
+  const wrong = Object.fromEntries(Object.entries(v2 && isObj(raw.wrong) ? raw.wrong : {}).filter(([k, t]) => k.includes('|') && Number.isFinite(t)));
+  // 都整理好了，才写：课程一个事务（要么全进要么全不进），再合进度，最后读最新设置合日志和错题本（本地优先）
+  // ponytail: 课程和进度是两个事务，写完课程后进度那步因配额失败会留下课程；要真原子得把 prog.merge 并进同一个跨表事务
+  if (ok.length) await tx('lessons', 'readwrite', st => { for (const l of ok) st.put(l); });
+  if (pl.length) await prog.merge(pl);
+  if (v2) { const s1 = settings.get(); settings.set({ ...s1, days: mergeDays(s1.days || {}), wrong: { ...wrong, ...s1.wrong } }); }
+  const np = pl.length;
   toast(`导入 ${ok.length} 课${np ? `、${np} 条学习进度` : ''}` + (ok.length < arr.length ? `，跳过 ${arr.length - ok.length} 条坏数据` : ''));
 }
 
