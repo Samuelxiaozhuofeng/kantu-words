@@ -4,6 +4,7 @@ import { listModels } from './ai.js';
 import { speak } from './tts.js';
 import { renderEditor } from './editor.js';
 import { renderStudy } from './study.js';
+import { renderStats } from './stats.js';
 import { renderWord } from './word.js';
 import { renderGen, queue, retryFailed, clearQueue } from './gen.js';
 import { PRESETS, pingAnki, listDecks, exportWrong } from './anki.js';
@@ -127,10 +128,24 @@ async function renderList() {
       let np = 0;
       if (!Array.isArray(raw)) {
         // 进度：同一个词保留更晚的那条；错题本：并集（备份里的错题会加回来）；日志：同一天取大
-        const pl = (raw.progress || []).filter(p => p && typeof p.key === 'string' && Number.isInteger(p.level) && p.level >= 0 && p.level <= 6 && Number.isFinite(p.due));
+        const pl = (raw.progress || []).filter(p => p && typeof p.key === 'string' && Number.isInteger(p.level) && p.level >= 0 && p.level <= 6 && Number.isFinite(p.due) && ['seen', 'right', 'wrong'].every(k => p[k] == null || Number.isFinite(p[k])));
         if (pl.length) { await prog.merge(pl); np = pl.length; }
         const s0 = settings.get(), days = { ...(s0.days || {}) };
-        for (const [d, v] of Object.entries(raw.days || {})) days[d] = { n: Math.max(v.n || 0, days[d]?.n || 0), new: Math.max(v.new || 0, days[d]?.new || 0), right: Math.max(v.right || 0, days[d]?.right || 0) };
+        for (const [d, v] of Object.entries(raw.days || {})) {
+          const loc = days[d] || {};
+          const row = { ...loc, n: Math.max(v.n || 0, loc.n || 0), new: Math.max(v.new || 0, loc.new || 0), right: Math.max(v.right || 0, loc.right || 0) };
+          const bm = v && typeof v.modes === 'object' && !Array.isArray(v.modes) ? v.modes : null;
+          if (bm) {
+            const modes = { ...(typeof loc.modes === 'object' && loc.modes && !Array.isArray(loc.modes) ? loc.modes : {}) };
+            for (const [k, mv] of Object.entries(bm)) {
+              if (!mv || typeof mv !== 'object' || typeof mv.n !== 'number' || typeof mv.right !== 'number') continue;
+              const prev = modes[k];
+              modes[k] = { n: Math.max(mv.n, prev && typeof prev.n === 'number' ? prev.n : 0), right: Math.max(mv.right, prev && typeof prev.right === 'number' ? prev.right : 0) };
+            }
+            row.modes = modes;
+          }
+          days[d] = row;
+        }
         settings.set({ ...s0, days, wrong: { ...(raw.wrong || {}), ...s0.wrong } });
       }
       toast(`导入 ${ok.length} 课${np ? `、${np} 条学习进度` : ''}` + (ok.length < arr.length ? `，跳过 ${arr.length - ok.length} 条坏数据` : '')); renderList();
@@ -329,6 +344,7 @@ function route() {
   if (page === 'edit') renderEditor(view, id);
   else if (page === 'study') renderStudy(view, id, undefined, parts[3]); // #/study/today/<课程id> 只练那一课
   else if (page === 'settings') renderSettings();
+  else if (page === 'stats') renderStats(view);
   else if (page === 'gen') renderGen(view);
   else if (page === 'word') renderWord(view, id, decodeURIComponent(parts.slice(3).join('/')));
   else {

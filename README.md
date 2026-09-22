@@ -46,6 +46,7 @@ npx wrangler pages deploy . --project-name kantu-words --branch master
 | `editor.js` | 备课页：传图 / 生图 / 识别 / 改框 |
 | `gen.js` | AI 出课页：选大类 → AI 列子话题 → 生图 + 识别存成一课；勾选批量 / 并发生成，首页看进度 |
 | `study.js` | 学习页：判对、提示、新词先过一遍、按题自选练法、答完写记忆状态 |
+| `stats.js` | 统计页：已掌握 / 学习中 / 新词、最近 30 天、练法强弱、最难的词 |
 | `progress.js` | 词级学习进度：复习间隔、按熟练度选练法、今天的题单、每日日志与连续天数 |
 | `word.js` | 跨课词视图：这个词在各课的出现 |
 | `ai.js` | 调 AI：拉模型、识图、生图 |

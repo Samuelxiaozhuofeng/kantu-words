@@ -220,6 +220,23 @@ button.mini{padding:2px 10px;font-size:12px;margin-left:4px}
 .result li .k{width:22px;text-align:center;font-weight:900}
 .result li .k.ok{color:var(--ok)}.result li .k.no{color:var(--bad)}
 .result .bar{justify-content:center;margin-top:20px}
+
+/* 统计页 */
+.stats{max-width:640px;margin:0 auto;overflow-x:hidden}
+.stats .nums{display:flex;gap:12px;text-align:center;margin-bottom:8px}
+.stats .nums div{flex:1;min-width:0}
+.stats .nums b{display:block;font-size:32px;font-weight:900;letter-spacing:-.03em;line-height:1.2}
+.stats-bars{display:flex;align-items:flex-end;gap:3px;height:80px;margin:4px 0 8px;overflow:hidden}
+.stats-bars i{flex:1;min-width:0;background:var(--mark);border-radius:3px 3px 0 0;min-height:2px}
+.stats .modes,.stats .hard{list-style:none;padding:0;margin:0}
+.stats .modes li,.stats .hard li{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.stats .modes li:last-child,.stats .hard li:last-child{border-bottom:none}
+.stats .modes li b,.stats .hard li b{min-width:4.5em}
+.stats .modes li{justify-content:space-between}
+.stats .modes li.weak{background:var(--mark-soft);margin:0 -12px;padding:8px 12px;border-radius:8px;border-bottom-color:transparent}
+.stats .modes .tag{font-size:12px;background:var(--bad);color:#fff;border-radius:999px;padding:1px 8px;font-weight:800}
+.stats .hard{margin-top:10px}
+.stats .panel .btn{margin-bottom:4px}
 @media(max-width:820px){
   main{padding:4px 14px 32px}
   .deck{position:static;padding:18px 12px 12px}
@@ -233,7 +250,7 @@ button.mini{padding:2px 10px;font-size:12px;margin-left:4px}
 </style>
 </head>
 <body>
-<header><a class="logo" href="#/"><i></i>看图记词</a><span class="sp"></span><a class="ghost" href="#/settings">设置</a></header>
+<header><a class="logo" href="#/"><i></i>看图记词</a><span class="sp"></span><a class="ghost" href="#/stats">统计</a><a class="ghost" href="#/settings">设置</a></header>
 <main id="view"></main>
 <script type="module" src="app.js"></script>
 </body>

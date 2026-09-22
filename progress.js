@@ -43,19 +43,28 @@ export const record = (q, first) => {
   }).then(() => fb);
 };
 
-// 按熟练度选练法：刚认识的用认读题，学习中打单词，掌握了考句子 / 搭配（没有就打单词）
+// 按熟练度选练法：刚认识的选目标语言的词 / 听音点图，学习中打单词，掌握了考句子 / 搭配（没有就打单词）
 const hasCol = it => (it.col || []).some(c => c && colOf(c.en).answers.length);
 export function modeFor(level, it) {
-  if (level <= 1) return ['pickZh', 'pickEn', 'tap'][Math.floor(Math.random() * 3)];
+  if (level <= 1) return Math.random() < 0.5 ? 'pickEn' : 'tap'; // 新词考的是目标语言的词，不出「选中文」（自由练里仍可手选）
   if (level <= 3) return 'type';
   return it.sent ? 'sent' : hasCol(it) ? 'col' : 'type';
 }
 
-// 每日日志：settings.days = { 'YYYY-MM-DD': { n: 答了几题, new: 新学几个, right: 一次答对几个 } }
+// 每日日志：settings.days = { 'YYYY-MM-DD': { n, new, right, modes? } }；modes = { type: { n, right }, ... }，learn 不记；老日子没这字段读时当 {}
+const MODE_KEYS = { type: 1, tap: 1, sent: 1, pickEn: 1, pickZh: 1, col: 1 };
 export const days = () => settings.get().days || {};
 export const logDay = (add) => {
   const s = settings.get(), d = today(), all = { ...(s.days || {}) }, cur = all[d] || { n: 0, new: 0, right: 0 };
-  all[d] = { n: cur.n + (add.n || 0), new: cur.new + (add.new || 0), right: cur.right + (add.right || 0) };
+  const modes = { ...(cur.modes || {}) };
+  if (add.modes && typeof add.modes === 'object' && !Array.isArray(add.modes)) {
+    for (const [k, v] of Object.entries(add.modes)) {
+      if (!MODE_KEYS[k] || !v || typeof v !== 'object') continue;
+      const prev = modes[k] || { n: 0, right: 0 };
+      modes[k] = { n: prev.n + (v.n || 0), right: prev.right + (v.right || 0) };
+    }
+  }
+  all[d] = { ...cur, n: cur.n + (add.n || 0), new: (cur.new || 0) + (add.new || 0), right: (cur.right || 0) + (add.right || 0), modes };
   settings.set({ ...s, days: all });
 };
 // 连续天数：从今天（今天没学就从昨天）往前数有记录的日子
@@ -89,6 +98,23 @@ export const masteredLessons = (lessons, plist) => {
   const lv = new Map(plist.map(p => [p.key, p.level]));
   return lessons.filter(l => !l.archived && l.items.length && l.items.every(it => (lv.get(l.id + '|' + it.en) || 0) >= MASTER));
 };
+// 最难的词：level < MASTER 且错过的，按错次数、错占比排，对回现有课程取前 10（课已删 / 词已改名的跳过、往后补）
+export function hardWords(lessons, plist) {
+  const byId = Object.fromEntries(lessons.map(l => [l.id, l]));
+  const ranked = plist.filter(p => p.level < MASTER && p.wrong > 0)
+    .sort((a, b) => (b.wrong - a.wrong) || ((b.wrong / (b.seen || 1)) - (a.wrong / (a.seen || 1))));
+  const out = [];
+  for (const p of ranked) {
+    const i = p.key.indexOf('|');
+    if (i < 0) continue;
+    const lesson = byId[p.key.slice(0, i)];
+    const item = lesson?.items.find(it => it.en === p.key.slice(i + 1));
+    if (!item) continue;
+    out.push({ lesson, item, wrong: p.wrong, seen: p.seen, level: p.level });
+    if (out.length === 10) break;
+  }
+  return out;
+}
 // 一课的掌握情况 { mastered, learning, fresh, due }
 export function lessonStat(l, plist) {
   const lv = new Map(plist.filter(p => p.key.startsWith(l.id + '|')).map(p => [p.key, p])), end = endOfToday(), st = { mastered: 0, learning: 0, fresh: 0, due: 0, total: 0 };
