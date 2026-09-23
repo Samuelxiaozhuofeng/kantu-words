@@ -2,6 +2,7 @@
 import { esc, toast, settings, setArchived } from './lib.js';
 import { keyOf, streak, levelName, dueText, masteredLessons, prog, MASTER } from './progress.js';
 import { paint } from './paint.js';
+import { autoSync } from './sync.js';
 
 // c = { id, only, given, items, quizIdx, done, fbs, before: 开场时的进度 Map, restart(题单), setBook }
 export async function renderResult(view, c) {
@@ -9,6 +10,7 @@ export async function renderResult(view, c) {
   const first = quizIdx.filter(k => done.get(k)).length, k = streak(), book = settings.get().wrong;
   const missed = quizIdx.filter(k => !done.get(k)).map(k => items[k]);
   const plist = await prog.all(), after = new Map(plist.map(p => [p.key, p]));
+  autoSync(); // 学完一场就推一次，换设备能接着学
   const isToday = id === 'today' || id === 'first', mix = isToday || ['wrong', 'all', 'hard'].includes(id);
   const lessons = [...new Map(items.map(q => [q.lesson.id, q.lesson])).values()];
   const ready = masteredLessons(lessons, plist);

@@ -1,5 +1,5 @@
 // 入口：hash 路由、底部四个标签（今天 / 世界 / 词库 / 我）、「我」页（设置 + 备份）、注册 PWA
-import { db, tx, esc, settings, toast, LEVELS, levelOf, KEYS, KEY_NAMES, keysOf, comboOf, keyLabel } from './lib.js';
+import { esc, settings, toast, LEVELS, levelOf, KEYS, KEY_NAMES, keysOf, comboOf, keyLabel } from './lib.js';
 import { listModels } from './ai.js';
 import { speak } from './tts.js';
 import { renderEditor } from './editor.js';
@@ -11,78 +11,10 @@ import { renderScene } from './scene.js';
 import { renderToday, renderWorld } from './home.js';
 import { packsReady } from './packs.js';
 import { PRESETS, pingAnki, listDecks } from './anki.js';
-import { prog, newPerDay } from './progress.js';
+import { newPerDay } from './progress.js';
+import { exportBackup, importBackup, runSync, autoSync, startSync, joinSync, joinFresh, rotateCode, stopSync, showCode, normCode } from './sync.js';
 
 const view = document.getElementById('view');
-
-const blobToDataUrl = b => new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); });
-function download(name, text) {
-  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([text])), download: name });
-  a.click();
-}
-// v2 备份：课程 + 学习进度 + 错题本 + 每日日志；旧版本导入这份会报「导入失败」，得先更新 App
-async function exportBackup() {
-  const lessons = await db.all();
-  const out = { v: 2, lessons: await Promise.all(lessons.map(async l => ({ ...l, image: await blobToDataUrl(l.image) }))), progress: await prog.all(), wrong: settings.get().wrong, days: settings.get().days || {} };
-  download(`看图记词-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(out));
-}
-// 先把整份备份校验、整理完（含图片解码），全部没问题才开始写库：坏备份要么整份不动，要么只跳过坏的那几条，不会写一半再报错
-const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
-const num = v => typeof v === 'number' && Number.isFinite(v) ? v : 0;
-async function importBackup(file) {
-  let raw;
-  try { raw = JSON.parse(await file.text()); } catch { throw new Error('文件不是有效的 JSON'); }
-  // 旧备份是课程数组；v2 是对象 { lessons, progress, wrong, days }
-  const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.lessons) ? raw.lessons : null;
-  if (!arr) throw new Error('这不是看图记词的备份文件');
-  // 课程：缺字段、图片不是图片 data URL 或解不开的跳过，其余补齐默认值
-  const ok = [];
-  for (const l of arr) {
-    if (!isObj(l) || !l.id || typeof l.id !== 'string' || l.id.includes('|') || typeof l.image !== 'string' || !l.image.startsWith('data:image/') || !Array.isArray(l.items)) continue;
-    let image;
-    try { image = await (await fetch(l.image)).blob(); } catch { continue; }
-    ok.push({
-      title: '未命名', created: Date.now(), ...l, image,
-      items: l.items.filter(i => isObj(i) && i.en && Array.isArray(i.box) && i.box.length === 4).map(i => {
-        const it = { zh: '', ipa: '', pos: '', alts: [], sent: '', sentZh: '', col: [], ...i };
-        it.col = Array.isArray(it.col) ? it.col.filter(c => c && typeof c.en === 'string') : [];
-        return it;
-      }),
-    });
-  }
-  const v2 = !Array.isArray(raw);
-  // 进度：同一个词保留更晚的那条（merge 里比）
-  const pl = v2 && Array.isArray(raw.progress) ? raw.progress.filter(p => isObj(p) && typeof p.key === 'string' && Number.isInteger(p.level) && p.level >= 0 && p.level <= 6 && Number.isFinite(p.due) && ['seen', 'right', 'wrong'].every(k => p[k] == null || Number.isFinite(p[k]))) : [];
-  // 日志：只留像样的日子（日期键、对象值）；和本地的合并放到写入那一刻，用最新的设置
-  const bdays = Object.entries(v2 && isObj(raw.days) ? raw.days : {}).filter(([d, v]) => isObj(v) && /^\d{4}-\d{2}-\d{2}$/.test(d));
-  const mergeDays = local => {
-    const days = { ...local };
-    for (const [d, v] of bdays) {
-      const loc = isObj(days[d]) ? days[d] : {};
-      const row = { ...loc, n: Math.max(num(v.n), num(loc.n)), new: Math.max(num(v.new), num(loc.new)), right: Math.max(num(v.right), num(loc.right)) };
-      if (isObj(v.modes)) {
-        const modes = { ...(isObj(loc.modes) ? loc.modes : {}) };
-        for (const [k, mv] of Object.entries(v.modes)) {
-          if (!isObj(mv) || typeof mv.n !== 'number' || typeof mv.right !== 'number') continue;
-          const prev = isObj(modes[k]) ? modes[k] : {};
-          modes[k] = { n: Math.max(mv.n, num(prev.n)), right: Math.max(mv.right, num(prev.right)) };
-        }
-        row.modes = modes;
-      }
-      days[d] = row;
-    }
-    return days;
-  };
-  // 错题本：并集（备份里的错题会加回来），只收「课程id|词」→ 时间戳
-  const wrong = Object.fromEntries(Object.entries(v2 && isObj(raw.wrong) ? raw.wrong : {}).filter(([k, t]) => k.includes('|') && Number.isFinite(t)));
-  // 都整理好了，才写：课程一个事务（要么全进要么全不进），再合进度，最后读最新设置合日志和错题本（本地优先）
-  // ponytail: 课程和进度是两个事务，写完课程后进度那步因配额失败会留下课程；要真原子得把 prog.merge 并进同一个跨表事务
-  if (ok.length) await tx('lessons', 'readwrite', st => { for (const l of ok) st.put(l); });
-  if (pl.length) await prog.merge(pl);
-  if (v2) { const s1 = settings.get(); settings.set({ ...s1, days: mergeDays(s1.days || {}), wrong: { ...wrong, ...s1.wrong } }); }
-  const np = pl.length;
-  toast(`导入 ${ok.length} 课${np ? `、${np} 条学习进度` : ''}` + (ok.length < arr.length ? `，跳过 ${arr.length - ok.length} 条坏数据` : ''));
-}
 
 function renderSettings() {
   const s = settings.get();
@@ -111,9 +43,10 @@ function renderSettings() {
       <div id="pane-data" hidden>
       <div class="panel">
       <h3 style="margin-top:0">备份</h3>
-      <p class="muted">所有东西只存在这台设备的浏览器里。换设备、清浏览器数据之前，先导出一份。备份带课程、学习进度、错题本和每日记录。</p>
+      <p class="muted">东西存在这台设备的浏览器里；开了下面的同步，也会在云端存一份。换设备、清浏览器数据之前，先导出一份。备份带课程、学习进度、错题本和每日记录。</p>
       <div class="bar"><button id="export">导出备份</button><label class="btn">导入备份<input type="file" id="import" accept=".json" hidden></label></div>
       </div>
+      <div class="panel" style="margin-top:16px" id="syncBox"></div>
       </div>
       <div id="pane-api" hidden>
       <div class="panel">
@@ -168,7 +101,7 @@ function renderSettings() {
     </div>`;
   const $ = s => view.querySelector(s);
   const collect = () => ({
-    ...s,
+    ...settings.get(), // 读最新的：同步 / 导入在这页上改过错题本和日志，别拿打开页面时的旧快照盖回去
     ...Object.fromEntries(['apiUrl', 'apiKey', 'visionModel', 'imageApiUrl', 'imageApiKey', 'imageModel', 'voice'].map(k => [k, $('#' + k).value.trim()])),
     ankiDeck: $('#ankiNew').value.trim() || $('#ankiDeck').value || s.ankiDeck || '',
     ankiPreset: $('#ankiPreset').value || 'pic',
@@ -214,6 +147,7 @@ function renderSettings() {
   };
   $('#ankiPing').onclick = connectAnki;
   $('#export').onclick = exportBackup;
+  drawSync($('#syncBox'));
   $('#import').onchange = async e => { try { await importBackup(e.target.files[0]); } catch (err) { alert('导入失败：' + err.message); } e.target.value = ''; };
   $('#ankiPreset').onchange = () => { $('#ankiHint').textContent = PRESETS[$('#ankiPreset').value].hint; };
   $('#fetch').onclick = async () => {
@@ -236,6 +170,44 @@ function renderSettings() {
   $('#save').onclick = () => { settings.set(collect()); toast('已保存'); };
 }
 
+// 「我 → 备份」里的同步面板：没开时「开启同步 / 输入同步码」，开了显示码、上次同步和换码 / 停止
+const syncMsg = r => { const bits = [r.pulled && `收到 ${r.pulled} 课`, r.pushed && `送出 ${r.pushed} 课`, r.deleted && `删掉 ${r.deleted} 课`].filter(Boolean); return '同步好了' + (bits.length ? '：' + bits.join('，') : ''); };
+const syncFail = e => alert('同步失败：' + (e instanceof TypeError ? '连不上同步服务器，检查网络' : e.message));
+function drawSync(box) {
+  const s = settings.get(), code = s.syncCode;
+  box.innerHTML = `<h3 style="margin-top:0">多设备同步</h3>` + (code ? `
+    <p>同步码 <b style="font-family:ui-monospace,monospace;letter-spacing:.05em">${esc(showCode(code))}</b></p>
+    <div class="bar"><button data-sync="copy">复制</button>${navigator.share ? '<button data-sync="share">发到别的设备</button>' : ''}</div>
+    <p class="muted">在别的设备上打开「我 → 备份 → 输入同步码」填这串码。同步码就是钥匙：拿到它的人能看到、改动你的课，别发给别人。</p>
+    <p class="muted">${s.syncAt ? '上次同步：' + new Date(s.syncAt).toLocaleString() : '还没同步过'}${s.syncErr ? `<br><span style="color:var(--bad)">${esc(s.syncErr)}</span>` : ''}</p>
+    <div class="bar"><button data-sync="now" class="primary">立即同步</button><button data-sync="rotate">换一个同步码</button><button data-sync="stop">在这台停止同步</button></div>` : `
+    <p class="muted">开了之后，手机和电脑上的课、学习进度、错题本会自动保持一致。AI 接口的 Key、快捷键、发音人不同步，每台设备各填各的。</p>
+    <div class="bar"><button data-sync="start" class="primary">开启同步</button></div>
+    <p class="muted" style="margin-top:16px">已经在别的设备上开过？输入那边的同步码（两边的课会合在一起）：</p>
+    <div class="bar"><input id="syncIn" placeholder="XXXX-XXXX-XXXX-XXXX" autocomplete="off" style="flex:1"><button data-sync="join">加入</button></div>`);
+  box.onclick = async e => {
+    const b = e.target.closest('[data-sync]'), act = b?.dataset.sync;
+    if (!act) return;
+    const busy = async (fn, ok) => { b.disabled = true; try { const r = await fn(); if (ok) toast(ok(r), 4000); } catch (err) { syncFail(err); } drawSync(box); };
+    if (act === 'copy') navigator.clipboard.writeText(showCode(code)).then(() => toast('已复制'), () => toast('复制不了，手动抄一下'));
+    else if (act === 'share') navigator.share({ title: '看图记词同步码', text: '看图记词同步码：' + showCode(code), url: location.origin + '/#/join/' + code }).catch(() => {});
+    else if (act === 'start') await busy(startSync, () => '同步已开启，在别的设备上输入这串码就能接上');
+    else if (act === 'join') await busy(() => joinSync(box.querySelector('#syncIn').value), syncMsg);
+    else if (act === 'now') { if (!navigator.onLine) return toast('没联网，连上会自动同步'); await busy(runSync, syncMsg); }
+    else if (act === 'rotate' && confirm('换码后旧码马上作废，其他设备要重新输入新码才能继续同步。换吗？')) await busy(rotateCode, () => '换好了，去其他设备输入新码');
+    else if (act === 'stop' && confirm('这台停止同步？本机的课和进度都留着，云端也不删；以后输入同步码还能接上。')) { stopSync(); drawSync(box); }
+  };
+}
+// 分享出来的链接 #/join/<码>：新设备（还没走完新手引导）以云端为准，已经在用的设备和本机合并
+async function joinFromLink(code) {
+  const fresh = !settings.get().onboarded;
+  if (settings.get().syncCode === normCode(code)) return location.replace('#/settings');
+  if (!confirm(`用同步码 ${showCode(normCode(code))} 加入同步？` + (fresh ? '会拿到那台设备上的课和学习进度。' : '这台的课会和那边的合在一起。'))) return location.replace('#/');
+  view.innerHTML = '<p class="muted" style="text-align:center;margin-top:40px">正在同步…</p>';
+  try { toast(syncMsg(await (fresh ? joinFresh(code) : joinSync(code))), 4000); } catch (e) { syncFail(e); }
+  location.replace(fresh ? '#/' : '#/settings');
+}
+
 // 底部四个标签：学习页、编辑页不摆（专心做一件事）；子页面亮它所属的标签
 const TAB = { '': 'today', world: 'world', scene: 'world', gen: 'world', stats: 'stats', word: 'stats', settings: 'me' };
 function nav(page) {
@@ -254,7 +226,8 @@ function route() {
   view.onclick = view.onkeydown = view.onchange = null;
   nav(page);
   scrollTo(0, 0);
-  if (page === 'edit') renderEditor(view, id);
+  if (page === 'join') joinFromLink(id);
+  else if (page === 'edit') renderEditor(view, id);
   else if (page === 'study') renderStudy(view, id, undefined, parts[3]); // #/study/today/<课程id> 只练那一课
   else if (page === 'settings') renderSettings();
   else if (page === 'stats') renderStats(view);
@@ -272,5 +245,15 @@ function route() {
 addEventListener('hashchange', route);
 addEventListener('kantu:gen', () => { const p = location.hash.split('/')[1] || ''; if (p === '') renderToday(view); else if (p === 'world') renderWorld(view); }); // 批量出课进度变了，在今天 / 世界页就重画
 addEventListener('beforeunload', e => { if (view.dirty) e.preventDefault(); });
+// 同步：打开 App（内置课进库后）、切走时推一次；切回来时拉一次（半分钟内不重复）；收到别的设备的改动就重画今天 / 世界 / 词库页
+{ const { davUrl, davUser, davPass, davAt, ...s } = settings.get(); if (davUrl !== undefined || davPass !== undefined) settings.set(s); } // 清掉撤回的 WebDAV 版本留下的网盘账号密码
+let lastPull = 0;
+addEventListener('visibilitychange', () => { if (view.dirty) return; /* 编辑页有没保存的改动：先不同步，免得保存时拿旧快照盖掉刚拉下来的版本 */ if (document.hidden) autoSync(); else if (Date.now() - lastPull > 30e3) { lastPull = Date.now(); autoSync(); } });
+addEventListener('kantu:sync', e => {
+  const p = location.hash.split('/')[1] || '', r = e.detail;
+  if (p === 'settings') { const box = view.querySelector('#syncBox'); if (box) drawSync(box); }
+  else if (r && (r.pulled || r.deleted) && !view.querySelector('.welcome')) ({ '': renderToday, world: renderWorld, stats: renderStats })[p]?.(view);
+});
 route();
+if (settings.get().syncCode) packsReady().catch(() => {}).then(() => { lastPull = Date.now(); autoSync(); });
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');

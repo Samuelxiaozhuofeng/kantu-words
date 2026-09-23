@@ -31,11 +31,17 @@ export const patchLesson = (id, fn) => tx('lessons', 'readwrite', s => {
   r.onsuccess = () => { const l = r.result; if (!l) return; fn(l); s.put(l); };
   return r;
 });
-// 归档 / 放回：只动 archived 一个字段；放回就把字段删掉，跟老课一个样
-export const setArchived = (id, on) => patchLesson(id, l => { if (on) l.archived = Date.now(); else delete l.archived; });
+// 归档 / 放回：只动 archived 一个字段；放回就把字段删掉，跟老课一个样。archAt 记最后一次收起 / 放回，同步时单独比（不动 updated，免得盖掉另一台改的词）
+export const setArchived = (id, on) => patchLesson(id, l => { if (on) l.archived = Date.now(); else delete l.archived; l.archAt = Date.now(); });
 export const settings = {
   get: () => ({ voice: 'en-US-JennyNeural', hintMode: 'always', studyMode: 'type', wrong: {}, ...JSON.parse(localStorage.kantu || '{}') }),
   set: o => localStorage.kantu = JSON.stringify(o),
+};
+// 错题本整本写回：被拿掉的键记进 wrongDel（移出时间），同步时另一台才知道它是被移出、不是还没加
+export const saveWrong = book => {
+  const s = settings.get(), del = { ...s.wrongDel }, now = Date.now();
+  for (const k of Object.keys(s.wrong || {})) if (!(k in book)) del[k] = now;
+  settings.set({ ...s, wrong: book, wrongDel: del });
 };
 // 错题本：键是「课程id|外文词」，读的时候按现有课程过滤（已删的课不出现，不主动清存储）
 export const wrongEntries = (lessons, book) => {

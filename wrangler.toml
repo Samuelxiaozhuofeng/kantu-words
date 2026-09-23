@@ -1,3 +1,8 @@
 name = "kantu-words"
 compatibility_date = "2026-09-01"
 pages_build_output_dir = "."
+
+# 多端同步：每个同步码一份 data.json + 图片（functions/sync）
+[[r2_buckets]]
+binding = "SYNC"
+bucket_name = "kantu-sync"

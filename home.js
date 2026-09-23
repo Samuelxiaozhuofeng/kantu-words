@@ -5,6 +5,7 @@ import { paintAll } from './paint.js';
 import { queue, retryFailed, clearQueue } from './gen.js';
 import { packsReady, switchPacks } from './packs.js';
 import { withPhoto } from './editor.js';
+import { joinFresh } from './sync.js';
 
 export const isPack = l => l.id.startsWith('pack-'); // 内置课按编号认，改过名、改过词还算内置
 const UNGROUPED = '未分组';
@@ -107,7 +108,8 @@ export function renderWelcome(view) {
   const step1 = () => {
     view.innerHTML = `<div class="welcome"><h1>看图记词</h1><p class="muted">每个词都住在一张图里的一个位置上。学会一个，图里那样东西就会亮起颜色。</p>
       <h2>你想学哪种语言？</h2><div class="langs">${Object.entries(LANGS).map(([k, L]) => `<button data-lang="${k}" class="${k === lang ? 'on' : ''}">${L.name}</button>`).join('')}</div>
-      <p><button class="link" id="skip">跳过，自己逛逛</button></p></div>`;
+      <p><button class="link" id="skip">跳过，自己逛逛</button></p>
+      <p><button class="link" id="join">已经在别的设备上用过？输入同步码</button></p></div>`;
   };
   const step2 = () => {
     view.innerHTML = `<div class="welcome"><h2>从哪一档学起？</h2><p class="muted">选你<b>大多还说不出来</b>的那一行</p>
@@ -118,6 +120,13 @@ export function renderWelcome(view) {
   view.onclick = async e => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.id === 'skip') { settings.set({ ...settings.get(), onboarded: true }); return renderToday(view); }
+    if (b.id === 'join') {
+      const code = prompt('输入另一台设备「我 → 备份」里的同步码');
+      if (!code) return;
+      view.innerHTML = `<div class="welcome"><h2>${dots('正在拿回你的课')}</h2></div>`;
+      try { await joinFresh(code); } catch (err) { alert('同步失败：' + (err instanceof TypeError ? '连不上同步服务器，检查网络' : err.message)); return step1(); }
+      return renderToday(view);
+    }
     if (b.dataset.lang) { lang = b.dataset.lang; settings.set({ ...settings.get(), lastLang: lang }); return step2(); }
     if (b.dataset.level) {
       settings.set({ ...settings.get(), level: b.dataset.level });

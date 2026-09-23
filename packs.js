@@ -42,7 +42,7 @@ export async function switchPacks(lang) {
   const packs = await fetchPacks();
   for (const p of packs) {
     const l = await db.get(p.id);
-    if (l) await db.put({ ...l, items: packItems(p, lang), lang });
+    if (l) await db.put({ ...l, items: packItems(p, lang), lang, updated: Date.now() }); // 打 updated：同步时新词表盖过另一台的旧语种
   }
   for (const p of packs) await prog.delPrefix(p.id + '|'); // 词全换了，原来的进度对不上号；只清 index.json 里这几课，不按前缀误伤同名前缀的自建课
   settings.set({ ...settings.get(), packLang: lang });
