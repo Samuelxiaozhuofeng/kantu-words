@@ -1,5 +1,5 @@
 // 词库页：已掌握 / 学习中 / 新词、最近 30 天柱状、各练法强弱、最难的词、错题本（词卡 + 导出 Anki）
-import { db, esc, settings, langOf, colOf, fitCrops, wrongEntries, saveWrong } from './lib.js';
+import { db, esc, settings, langOf, colOf, fitCrops, wrongEntries } from './lib.js';
 import { speak } from './tts.js';
 import { exportWrong } from './anki.js';
 import { prog, days, today, MASTER, levelName, hardWords } from './progress.js';
@@ -76,7 +76,7 @@ export async function renderStats(view) {
     <div class="panel">${wrongPanel}</div>
   </div>`;
   fitCrops(view);
-  const setBook = book => { saveWrong(book); renderStats(view); };
+  const setBook = book => { settings.set({ ...settings.get(), wrong: book }); renderStats(view); };
   view.onclick = async e => {
     const t = e.target, m = t.dataset.drill;
     if (m && MODES[m]) { settings.set({ ...settings.get(), studyMode: m }); location.hash = '#/study/all'; return; }

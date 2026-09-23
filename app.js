@@ -1,5 +1,5 @@
 // 入口：hash 路由、底部四个标签（今天 / 世界 / 词库 / 我）、「我」页（设置 + 备份）、注册 PWA
-import { esc, settings, toast, LEVELS, levelOf, KEYS, KEY_NAMES, keysOf, comboOf, keyLabel } from './lib.js';
+import { db, tx, esc, settings, toast, LEVELS, levelOf, KEYS, KEY_NAMES, keysOf, comboOf, keyLabel } from './lib.js';
 import { listModels } from './ai.js';
 import { speak } from './tts.js';
 import { renderEditor } from './editor.js';
@@ -11,10 +11,78 @@ import { renderScene } from './scene.js';
 import { renderToday, renderWorld } from './home.js';
 import { packsReady } from './packs.js';
 import { PRESETS, pingAnki, listDecks } from './anki.js';
-import { newPerDay } from './progress.js';
-import { exportBackup, importBackup, syncNow } from './sync.js';
+import { prog, newPerDay } from './progress.js';
 
 const view = document.getElementById('view');
+
+const blobToDataUrl = b => new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); });
+function download(name, text) {
+  const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([text])), download: name });
+  a.click();
+}
+// v2 备份：课程 + 学习进度 + 错题本 + 每日日志；旧版本导入这份会报「导入失败」，得先更新 App
+async function exportBackup() {
+  const lessons = await db.all();
+  const out = { v: 2, lessons: await Promise.all(lessons.map(async l => ({ ...l, image: await blobToDataUrl(l.image) }))), progress: await prog.all(), wrong: settings.get().wrong, days: settings.get().days || {} };
+  download(`看图记词-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(out));
+}
+// 先把整份备份校验、整理完（含图片解码），全部没问题才开始写库：坏备份要么整份不动，要么只跳过坏的那几条，不会写一半再报错
+const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
+const num = v => typeof v === 'number' && Number.isFinite(v) ? v : 0;
+async function importBackup(file) {
+  let raw;
+  try { raw = JSON.parse(await file.text()); } catch { throw new Error('文件不是有效的 JSON'); }
+  // 旧备份是课程数组；v2 是对象 { lessons, progress, wrong, days }
+  const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.lessons) ? raw.lessons : null;
+  if (!arr) throw new Error('这不是看图记词的备份文件');
+  // 课程：缺字段、图片不是图片 data URL 或解不开的跳过，其余补齐默认值
+  const ok = [];
+  for (const l of arr) {
+    if (!isObj(l) || !l.id || typeof l.id !== 'string' || l.id.includes('|') || typeof l.image !== 'string' || !l.image.startsWith('data:image/') || !Array.isArray(l.items)) continue;
+    let image;
+    try { image = await (await fetch(l.image)).blob(); } catch { continue; }
+    ok.push({
+      title: '未命名', created: Date.now(), ...l, image,
+      items: l.items.filter(i => isObj(i) && i.en && Array.isArray(i.box) && i.box.length === 4).map(i => {
+        const it = { zh: '', ipa: '', pos: '', alts: [], sent: '', sentZh: '', col: [], ...i };
+        it.col = Array.isArray(it.col) ? it.col.filter(c => c && typeof c.en === 'string') : [];
+        return it;
+      }),
+    });
+  }
+  const v2 = !Array.isArray(raw);
+  // 进度：同一个词保留更晚的那条（merge 里比）
+  const pl = v2 && Array.isArray(raw.progress) ? raw.progress.filter(p => isObj(p) && typeof p.key === 'string' && Number.isInteger(p.level) && p.level >= 0 && p.level <= 6 && Number.isFinite(p.due) && ['seen', 'right', 'wrong'].every(k => p[k] == null || Number.isFinite(p[k]))) : [];
+  // 日志：只留像样的日子（日期键、对象值）；和本地的合并放到写入那一刻，用最新的设置
+  const bdays = Object.entries(v2 && isObj(raw.days) ? raw.days : {}).filter(([d, v]) => isObj(v) && /^\d{4}-\d{2}-\d{2}$/.test(d));
+  const mergeDays = local => {
+    const days = { ...local };
+    for (const [d, v] of bdays) {
+      const loc = isObj(days[d]) ? days[d] : {};
+      const row = { ...loc, n: Math.max(num(v.n), num(loc.n)), new: Math.max(num(v.new), num(loc.new)), right: Math.max(num(v.right), num(loc.right)) };
+      if (isObj(v.modes)) {
+        const modes = { ...(isObj(loc.modes) ? loc.modes : {}) };
+        for (const [k, mv] of Object.entries(v.modes)) {
+          if (!isObj(mv) || typeof mv.n !== 'number' || typeof mv.right !== 'number') continue;
+          const prev = isObj(modes[k]) ? modes[k] : {};
+          modes[k] = { n: Math.max(mv.n, num(prev.n)), right: Math.max(mv.right, num(prev.right)) };
+        }
+        row.modes = modes;
+      }
+      days[d] = row;
+    }
+    return days;
+  };
+  // 错题本：并集（备份里的错题会加回来），只收「课程id|词」→ 时间戳
+  const wrong = Object.fromEntries(Object.entries(v2 && isObj(raw.wrong) ? raw.wrong : {}).filter(([k, t]) => k.includes('|') && Number.isFinite(t)));
+  // 都整理好了，才写：课程一个事务（要么全进要么全不进），再合进度，最后读最新设置合日志和错题本（本地优先）
+  // ponytail: 课程和进度是两个事务，写完课程后进度那步因配额失败会留下课程；要真原子得把 prog.merge 并进同一个跨表事务
+  if (ok.length) await tx('lessons', 'readwrite', st => { for (const l of ok) st.put(l); });
+  if (pl.length) await prog.merge(pl);
+  if (v2) { const s1 = settings.get(); settings.set({ ...s1, days: mergeDays(s1.days || {}), wrong: { ...wrong, ...s1.wrong } }); }
+  const np = pl.length;
+  toast(`导入 ${ok.length} 课${np ? `、${np} 条学习进度` : ''}` + (ok.length < arr.length ? `，跳过 ${arr.length - ok.length} 条坏数据` : ''));
+}
 
 function renderSettings() {
   const s = settings.get();
@@ -43,17 +111,8 @@ function renderSettings() {
       <div id="pane-data" hidden>
       <div class="panel">
       <h3 style="margin-top:0">备份</h3>
-      <p class="muted">东西存在这台设备的浏览器里；开了下面的同步，也会存一份到你自己的网盘。换设备、清浏览器数据之前，先导出一份。备份带课程、学习进度、错题本和每日记录。</p>
+      <p class="muted">所有东西只存在这台设备的浏览器里。换设备、清浏览器数据之前，先导出一份。备份带课程、学习进度、错题本和每日记录。</p>
       <div class="bar"><button id="export">导出备份</button><label class="btn">导入备份<input type="file" id="import" accept=".json" hidden></label></div>
-      </div>
-      <div class="panel" style="margin-top:16px">
-      <h3 style="margin-top:0">多设备同步（WebDAV）</h3>
-      <p class="muted">手机和电脑填同一个网盘，各点一次「同步」就一致了。数据存在你自己网盘的 kantu-sync 文件夹里。坚果云：网页版右上角账户信息 → 安全选项 → 第三方应用管理 → 添加应用，生成的就是「应用密码」（不要填登录密码）。</p>
-      <label class="field">WebDAV 地址 <input id="davUrl" placeholder="https://dav.jianguoyun.com/dav/" value="${esc(s.davUrl || 'https://dav.jianguoyun.com/dav/')}"></label>
-      <label class="field">账号 <input id="davUser" autocomplete="username" value="${esc(s.davUser)}"></label>
-      <label class="field">应用密码 <input id="davPass" type="password" autocomplete="current-password" value="${esc(s.davPass)}"></label>
-      <div class="bar"><button id="sync" class="primary">同步</button> <span class="muted" id="davAt">${s.davAt ? '上次同步：' + new Date(s.davAt).toLocaleString() : ''}</span></div>
-      <p class="muted small">同步时账号密码经本站中转到网盘，不会被保存；API Key、快捷键、发音人等设置不同步，每台设备各填各的。</p>
       </div>
       </div>
       <div id="pane-api" hidden>
@@ -109,8 +168,8 @@ function renderSettings() {
     </div>`;
   const $ = s => view.querySelector(s);
   const collect = () => ({
-    ...settings.get(), // 读最新的：同步 / 导入在这页上改过错题本和日志，别拿打开页面时的旧快照盖回去
-    ...Object.fromEntries(['apiUrl', 'apiKey', 'visionModel', 'imageApiUrl', 'imageApiKey', 'imageModel', 'voice', 'davUrl', 'davUser', 'davPass'].map(k => [k, $('#' + k).value.trim()])),
+    ...s,
+    ...Object.fromEntries(['apiUrl', 'apiKey', 'visionModel', 'imageApiUrl', 'imageApiKey', 'imageModel', 'voice'].map(k => [k, $('#' + k).value.trim()])),
     ankiDeck: $('#ankiNew').value.trim() || $('#ankiDeck').value || s.ankiDeck || '',
     ankiPreset: $('#ankiPreset').value || 'pic',
     genParallel: (n => Number.isInteger(n) && n >= 1 && n <= 8 ? n : 3)(+$('#genParallel').value),
@@ -155,20 +214,6 @@ function renderSettings() {
   };
   $('#ankiPing').onclick = connectAnki;
   $('#export').onclick = exportBackup;
-  $('#sync').onclick = async () => {
-    settings.set(collect());
-    const t = settings.get();
-    if (!t.davUrl || !t.davUser || !t.davPass) return toast('先填 WebDAV 地址、账号和应用密码');
-    if (!navigator.onLine) return toast('没联网，连上再同步');
-    const b = $('#sync'); b.disabled = true; b.textContent = '同步中…';
-    try {
-      const r = await syncNow();
-      const bits = [r.pulled && `拉下 ${r.pulled} 课`, r.pushed && `推上 ${r.pushed} 课`, r.deleted && `删掉 ${r.deleted} 课`].filter(Boolean);
-      toast('同步好了' + (bits.length ? '：' + bits.join('，') : '，两边本来就一样') + (r.missing ? `；${r.missing} 课的图片在网盘上找不到，先跳过` : ''), 4000);
-      $('#davAt').textContent = '上次同步：' + new Date().toLocaleString();
-    } catch (e) { alert('同步失败：' + (e instanceof TypeError ? '连不上网盘，检查网络和地址' : e.message)); }
-    b.disabled = false; b.textContent = '同步';
-  };
   $('#import').onchange = async e => { try { await importBackup(e.target.files[0]); } catch (err) { alert('导入失败：' + err.message); } e.target.value = ''; };
   $('#ankiPreset').onchange = () => { $('#ankiHint').textContent = PRESETS[$('#ankiPreset').value].hint; };
   $('#fetch').onclick = async () => {

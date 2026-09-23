@@ -161,7 +161,6 @@ export async function renderEditor(view, id) {
   $('#save').onclick = async () => {
     if (!lesson.image) return toast('还没有图');
     lesson.title = $('#title').value.trim() || '未命名';
-    lesson.updated = Date.now(); // 同步按它比哪台的版本新
     await db.put(lesson);
     view.dirty = false;
     toast('已保存');

@@ -13,7 +13,7 @@ export async function makeLesson(topic, folder, lang, level = levelOf(), onStep 
   const image = await shrink(await generateImage(topic, level));
   onStep('识别中');
   const items = await detect(image, lang, settings.get().withSent, level);
-  const lesson = { id: crypto.randomUUID(), title: titleOf(topic, level), folder, lang, image, items, created: Date.now(), updated: Date.now() };
+  const lesson = { id: crypto.randomUUID(), title: titleOf(topic, level), folder, lang, image, items, created: Date.now() };
   await db.put(lesson);
   return lesson;
 }

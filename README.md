@@ -32,7 +32,6 @@
 - **判对规则**：不分大小写、忽略冠词（各语种各自的）和标点、AI 给的同义词算对（日语打假名也算对）、单复数（s / es）算对
 - **发音**：微软 Edge 朗读（免费、不要 Key），每种语言配好发音人，英语的可换；本地缓存；失败自动降级浏览器自带朗读
 - **数据**：全部存在本机浏览器（IndexedDB），图片入库前压到 1600px JPEG；「我 → 备份」导出 / 导入，带课程（含故事）、学习进度、错题本、每日记录；导入时进度按词合并。删课、内置课切语种会一并清掉对应进度
-- **多设备同步**：「我 → 备份」填自己的 WebDAV 网盘（坚果云：地址 + 账号 + 应用密码），手机和电脑各点一次「同步」就一致。数据存在你网盘的 `kantu-sync/` 文件夹；账号密码经本站中转、不保存。课程按最后一次编辑的那台为准，删课、移出错题本也会同步过去；API Key、快捷键等设置不同步
 
 ## 需要准备
 
@@ -55,8 +54,7 @@ npx wrangler pages deploy . --project-name kantu-words --branch master
 | 文件 | 管什么 |
 |---|---|
 | `index.html` | 页面壳 + 导航 + 样式 |
-| `app.js` | 路由、四个标签、「我」页（设置 + 备份 / 同步面板） |
-| `sync.js` | 备份导入导出、WebDAV 按钮同步（共用校验和合并规则） |
+| `app.js` | 路由、四个标签、「我」页（设置 + 备份导入导出） |
 | `home.js` | 今天页、世界页、新手引导 |
 | `scene.js` | 场景页：上色大图探索、玩法入口；听故事、描述这张图 |
 | `paint.js` | 场景上色：灰底 + 学过的物品按熟练度上色 + 到期蒙灰雾 |
@@ -77,7 +75,6 @@ npx wrangler pages deploy . --project-name kantu-words --branch master
 | `packs/` | 内置课程：`index.json`（词表 + 框）和图片 |
 | `functions/tts.js` | Cloudflare 函数：代连 Edge TTS（浏览器不能自己设那些请求头） |
 | `functions/proxy.js` | Cloudflare 函数：给没开 CORS 的接口转一手 |
-| `functions/dav.js` | Cloudflare 函数：WebDAV 同步中转（只转 `kantu-sync/` 文件夹，不存东西） |
 
 ## 已知
 

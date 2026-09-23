@@ -1,5 +1,5 @@
 // 学习页：九种练法（打单词 / 听音点图 / 听句子点图 / 选单词 / 选中文 / 填搭配 / 说出来 / 记忆宫殿 / 少了什么）+ 新词「先猜后看」；「今天」题单每题按熟练度自带练法，答完当场写记忆状态并显示升降
-import { db, esc, toast, settings, LANGS, langOf, wrongEntries, keysOf, comboOf, colOf, hitAt, inside, ding, fitCrops, saveWrong } from './lib.js';
+import { db, esc, toast, settings, LANGS, langOf, wrongEntries, keysOf, comboOf, colOf, hitAt, inside, ding, fitCrops } from './lib.js';
 import { keyOf, record, modeFor, buildToday, prog, logDay, streak, levelName, dueText, MASTER, hardWords } from './progress.js';
 import { speak } from './tts.js';
 import { boxStyle } from './editor.js';
@@ -97,7 +97,7 @@ export async function renderStudy(view, id, given, only) {
   const hintMode = s.hintMode || 'always', autoNext = s.autoNext !== false, keys = keysOf(); // 这两个开关在「我 → 学习」里改，学习页不摆开关
   let i = 0, wrong = 0, revealed = false, choices = [], bad = new Set(), stageKey = '', mode = items[0].mode, inp = null, listening = false, peek = false; // peek = 说出来这题先听过答案
   // 错题本随答随写：没一次答对的当场记进去，勾选框能立刻反映、中途退出也不丢
-  const setBook = (k, on) => { const b = { ...settings.get().wrong }; if (on) b[k] = Date.now(); else delete b[k]; saveWrong(b); }; // 加入时间每次刷新：另一台早先移出过，这次答错也要算数
+  const setBook = (k, on) => { const b = { ...settings.get().wrong }; if (on) b[k] ||= Date.now(); else delete b[k]; settings.set({ ...settings.get(), wrong: b }); };
   // 提示区放什么：打单词 / 选单词 / 说出来给中文，听音点图 / 选中文给外文，听句子给句子，填搭配给中文 + 挖空句，新词先问「叫什么」，记忆宫殿只问位置（答错才给中文）
   const hintOf = () => {
     const q = cur(), it = q.item;
