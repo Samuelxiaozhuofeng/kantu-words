@@ -5,6 +5,6 @@ self.addEventListener('install', e => e.waitUntil(caches.open(C).then(c => c.add
 self.addEventListener('activate', e => e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== C).map(k => caches.delete(k)))).then(() => self.clients.claim())));
 self.addEventListener('fetch', e => {
   const u = new URL(e.request.url);
-  if (e.request.method !== 'GET' || u.origin !== location.origin || u.pathname.startsWith('/tts') || u.pathname.startsWith('/sync') || u.pathname.startsWith('/packs/')) return;
-  e.respondWith(fetch(e.request).then(r => { caches.open(C).then(c => c.put(e.request, r.clone())); return r; }).catch(() => caches.match(e.request)));
+  if (e.request.method !== 'GET' || u.origin !== location.origin || u.pathname === '/tts' || u.pathname.startsWith('/sync/') || u.pathname.startsWith('/packs/')) return;
+  e.respondWith(fetch(e.request).then(r => { const copy = r.clone(); caches.open(C).then(c => c.put(e.request, copy)); return r; }).catch(() => caches.match(e.request))); // 先复制再交给页面：等 caches.open 回来再 clone，页面可能已读完 body
 });
