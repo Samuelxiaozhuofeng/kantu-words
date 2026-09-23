@@ -65,7 +65,7 @@ export async function renderScene(view, id, sub) {
       settings.set({ ...settings.get(), studyMode: b.dataset.mode || $('#drill').value });
       location.hash = '#/study/' + l.id;
     } else if (b.dataset.act === 'arch') { await setArchived(l.id, !l.archived); toast(l.archived ? '放回了，到期照常复习' : '已收起，不再催复习'); renderScene(view, id); }
-    else if (b.dataset.act === 'del' && confirm(`删除「${l.title}」？学习进度一起删。`)) { await db.del(l.id); await prog.delPrefix(l.id + '|'); location.hash = '#/world'; }
+    else if (b.dataset.act === 'del' && confirm(`删除「${l.title}」？学习进度一起删。`)) { settings.set({ ...settings.get(), del: { ...settings.get().del, [l.id]: Date.now() } }); await db.del(l.id); await prog.delPrefix(l.id + '|'); location.hash = '#/world'; } // 先记删除时间（同步时另一台跟着删），再删；中途关掉下次同步也会删干净
   };
 }
 

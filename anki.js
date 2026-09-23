@@ -1,5 +1,5 @@
 // AnkiConnect：连本机 Anki、建笔记类型、把错题导出成卡
-import { settings, toast, langOf } from './lib.js';
+import { settings, toast, langOf, saveWrong } from './lib.js';
 import { getAudio } from './tts.js';
 
 const AC = 'http://127.0.0.1:8765';
@@ -147,7 +147,7 @@ export async function exportWrong(wrongs) {
   if (settings.get().ankiClear && okKeys.length) {
     const wrong = { ...settings.get().wrong };
     for (const k of okKeys) delete wrong[k];
-    settings.set({ ...settings.get(), wrong });
+    saveWrong(wrong);
   }
   return okKeys.length;
 }
