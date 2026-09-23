@@ -87,7 +87,7 @@ export async function renderStudy(view, id, given, only) {
       : '<div class="empty"><b>这一课还没有词</b>先去编辑页让 AI 识别一下</div>';
     return;
   }
-  const s = settings.get(), n = items.length, done = new Map(), fbs = new Map(), pending = []; // i -> 是否一次答对；i -> 记忆状态反馈；pending = 进度写入
+  const s = settings.get(), done = new Map(), fbs = new Map(), pending = []; // i -> 是否一次答对；i -> 记忆状态反馈；pending = 进度写入
   const before = new Map((await prog.all()).map(p => [p.key, p])); // 开场时的进度，结果页拿来画「上色前」
   const fixed = !isToday && !given?.some(q => q.fresh || q.mode === 'learn') ? items[0].mode : null; // 固定练法的场次才能换练法
   const hasSent = items.some(q => q.item.sent), hasCol = items.some(q => colsOf(q.item).length);
@@ -129,7 +129,7 @@ export async function renderStudy(view, id, given, only) {
   const fbText = f => !f ? '' : !f.counted ? `今天已计过 · ${dueText(f.due)}再见` : !f.first ? (f.before <= 1 ? `记下了 · ${dueText(f.due)}再考` : `↓ 回到 ${levelName(f.after)} · ${dueText(f.due)}再考`) : f.after >= MASTER && f.before < MASTER ? `🏅 已掌握，图里这样东西上色了 · ${dueText(f.due)}再见` : `↑ ${levelName(f.after)} · ${dueText(f.due)}再见`;
 
   view.innerHTML = `<div class="study" tabindex="-1">
-    <div class="top"><a class="btn quit" href="${back}" title="退出">✕</a><div class="progress"><i id="bar"></i></div><span class="step"><span id="prog"></span><small>/ ${n}</small></span>
+    <div class="top"><a class="btn quit" href="${back}" title="退出">✕</a><div class="progress"><i id="bar"></i></div><span class="step"><span id="prog"></span><small id="tot"></small></span>
       ${fixed ? `<select id="modeSel" title="换一种练法">${Object.entries(MODES).filter(([k]) => (hasSent || k !== 'sent') && (hasCol || k !== 'col')).map(([k, v]) => `<option value="${k}" ${k === fixed ? 'selected' : ''}>${v}</option>`).join('')}</select>` : ''}</div>
     <div class="two">
       <div><div class="stage" id="stage"></div><p class="where muted" id="title"></p></div>
@@ -149,7 +149,7 @@ export async function renderStudy(view, id, given, only) {
         <div class="answer" id="ans"></div><div class="fb" id="fb"></div>
         ${mode === 'speak' ? '<div class="bar grade" id="grade" hidden><button id="gradeOk" class="okb">✓ 我说对了</button><button id="gradeNo">✗ 没说对</button></div>' : ''}
         <div class="bar">
-          <button id="prev" title="上一个">‹</button><button id="say" title="发音">🔊</button>${mode === 'learn' ? '<button id="show" class="primary">揭晓 ⏎</button><button id="next" class="primary">记住了，下一个 ⏎</button>' : `<button id="show">答案</button>${isTyped(mode) ? '<button id="submit" class="primary">提交 ⏎</button>' : ''}<button id="next" title="下一个">›</button>`}
+          <button id="prev" title="上一个">‹</button><button id="say" title="发音">🔊</button>${mode === 'learn' ? '<button id="show" class="primary">揭晓 ⏎</button><button id="forgot">还没记住 ⌫</button><button id="next" class="primary">记住了 ⏎</button>' : `<button id="show">答案</button>${isTyped(mode) ? '<button id="submit" class="primary">提交 ⏎</button>' : ''}<button id="next" title="下一个">›</button>`}
           <label class="chk"><input type="checkbox" id="mark"> 错题本</label>
         </div>`;
     inp = $('#in');
@@ -182,7 +182,8 @@ export async function renderStudy(view, id, given, only) {
     const q = cur(), it = q.item, ok = done.has(i), learn = mode === 'learn', open = ok || revealed;
     $('#prog').textContent = i + 1;
     $('#title').textContent = q.lesson.title;
-    $('#bar').style.width = (done.size / n * 100) + '%';
+    $('#tot').textContent = '/ ' + items.length;
+    $('#bar').style.width = (done.size / items.length * 100) + '%';
     drawHint();
     $('#ans').className = 'answer' + (ok && !learn ? ' ok' : '');
     $('#mark').checked = !!settings.get().wrong[keyOf(q)];
@@ -193,8 +194,8 @@ export async function renderStudy(view, id, given, only) {
       ${more ? `<details class="more"><summary>例句 · 搭配</summary>${more}</details>` : ''}
       ${also.length ? `<div class="also"><a href="#/word/${langOf(q.lesson)}/${encodeURIComponent(it.en)}">它还在 ${also.length} 张图里 ›</a><div class="crops">${also.slice(0, 3).map(o => `<div class="crop"><img src="${urlOf(o.l)}" data-box="${o.it.box.join(',')}"></div>`).join('')}</div></div>` : ''}` : '';
     fitCrops($('#ans'));
-    $('#fb').textContent = fbText(fbs.get(i)) || (mode === 'speak' && !ok && !revealed && !canListen() ? '先大声说出来，再点「答案」对一下' : '');
-    if (learn) { $('#show').hidden = revealed; $('#next').hidden = !revealed; }
+    $('#fb').textContent = fbText(fbs.get(i)) || (mode === 'speak' && !ok && !revealed && !canListen() ? '先大声说出来，再点「答案」对一下' : q.again && !ok && !revealed ? (learn ? '再看一遍' : '刚才没答对，再来一次') : '');
+    if (learn) { $('#show').hidden = revealed; $('#next').hidden = $('#forgot').hidden = !revealed; }
     if ($('#grade')) $('#grade').hidden = !(revealed && !ok);
     if ($('#mic')) $('#mic').disabled = ok;
     if (isTap(mode)) {
@@ -242,22 +243,30 @@ export async function renderStudy(view, id, given, only) {
   }
   // skipDone：答对后自动前进时跳过已答完的，直到剩下的都做完
   const go = (d, skipDone) => {
+    const n = items.length;
     do i = (i + d + n) % n; while (skipDone && done.has(i) && done.size < n);
     newQuestion();
   };
   // 答完了往下走：跳过已答的，全答完就出结果；没答的题就是普通翻页
-  const next = () => !done.has(i) ? go(1) : done.size === n ? finish() : go(1, true);
+  const next = () => !done.has(i) ? go(1) : done.size === items.length ? finish() : go(1, true);
+  // 这一场里再见一次（新词「还没记住」/ 新词考错）：复制一张插到 3 张之后；done / fbs 按下标记，插入点之后的往后挪。副本不记进度、不进结果页和日志
+  const again = q => {
+    const p = Math.min(i + 4, items.length);
+    items.splice(p, 0, { ...q, again: true });
+    for (const m of [done, fbs]) { const e = [...m]; m.clear(); for (const [k, v] of e) m.set(k >= p ? k + 1 : k, v); }
+  };
   function miss() { wrong++; ding(false); drawHint(); }
   function correct(first = wrong === 0 && !revealed) {
     const at = i, q = cur();
     done.set(at, first);
     ding(first);
     if (!first) setBook(keyOf(q), true);
+    if (!first && q.fresh) again(q); // 新词考错了，过几张再考，直到答对
     if (!isTap(mode)) say(); // 点图模式刚播过，不重复
     show();
     // 记忆状态当场写，回来还在这题就把升降显示出来
-    pending.push(record(q, first).then(f => { fbs.set(at, f); if (root.isConnected && i === at) $('#fb').textContent = fbText(f); }).catch(e => console.warn('进度没存上', e)));
-    if (autoNext) setTimeout(() => { if (root.isConnected && i === at) next(); }, 1300); // 期间已手动翻页 / 切模式 / 离开就作废
+    if (!q.again) pending.push(record(q, first).then(f => { fbs.set(items.indexOf(q), f); if (root.isConnected && cur() === q) $('#fb').textContent = fbText(f); }).catch(e => console.warn('进度没存上', e)));
+    if (autoNext) setTimeout(() => { if (root.isConnected && cur() === q) next(); }, 1300); // 期间已手动翻页 / 切模式 / 离开就作废；按题目认不按下标（again 插卡会挪下标）
   }
   function submit() {
     if (done.has(i)) return next();
@@ -276,19 +285,19 @@ export async function renderStudy(view, id, given, only) {
   // 说出来：识别到了就自动判；识别坏了（没权限 / 连不上）这场改成自己判
   async function mic() {
     if (done.has(i) || listening) return;
-    const q = cur(), at = i, btn = $('#mic');
+    const q = cur(), btn = $('#mic');
     listening = true; btn.classList.add('on'); btn.textContent = '在听…';
     try {
       const got = await listen(LANGS[langOf(q.lesson)].tag).done;
-      if (!root.isConnected || i !== at) return;
+      if (!root.isConnected || cur() !== q) return;
       if (heard(got, q.item, langOf(q.lesson))) return correct();
       miss();
       $('#fb').textContent = got.length ? `听成了「${got[0]}」· 再说一次，或点「答案」对一下` : '没听清，再说一次';
     } catch (e) {
       toast(e.message + (canListen() ? '' : '，改成自己判：说出来再点「答案」'));
-      if (!canListen() && root.isConnected && i === at) { drawDeck(); show(); return; }
+      if (!canListen() && root.isConnected && cur() === q) { drawDeck(); show(); return; }
     } finally { listening = false; }
-    if (root.isConnected && i === at && $('#mic')) { $('#mic').classList.remove('on'); $('#mic').textContent = '🎤 再说一次'; }
+    if (root.isConnected && cur() === q && $('#mic')) { $('#mic').classList.remove('on'); $('#mic').textContent = '🎤 再说一次'; }
   }
   // 自己判：揭晓后对照答案，说对了算一次答对（揭晓本身不扣分，本来就得看答案才能判）
   const grade = ok => { if (done.has(i)) return; if (!ok) wrong++; correct(ok && wrong === 0 && !peek); }; // 先点🔊听过答案再说，不算一次答对
@@ -309,7 +318,7 @@ export async function renderStudy(view, id, given, only) {
   async function finish() {
     if (finished) return;
     finished = true;
-    const quizIdx = [...items.keys()].filter(k => items[k].mode !== 'learn');
+    const quizIdx = [...items.keys()].filter(k => items[k].mode !== 'learn' && !items[k].again);
     const modes = {};
     for (const k of quizIdx) {
       const m = items[k].mode;
@@ -318,7 +327,7 @@ export async function renderStudy(view, id, given, only) {
       modes[m].n++;
       if (done.get(k)) modes[m].right++;
     }
-    if (quizIdx.length) logDay({ n: quizIdx.length, right: quizIdx.filter(k => done.get(k)).length, new: items.filter(q => q.mode === 'learn').length, modes });
+    if (quizIdx.length) logDay({ n: quizIdx.length, right: quizIdx.filter(k => done.get(k)).length, new: items.filter(q => q.mode === 'learn' && !q.again).length, modes });
     await Promise.all(pending);
     if (!root.isConnected) return; // 等进度写完这会儿用户已经离开，别把别的页面画成结果页
     renderResult(view, { id, only, given, items, quizIdx, done, fbs, before, setBook, restart: g => renderStudy(view, id, g, only) });
@@ -330,6 +339,7 @@ export async function renderStudy(view, id, given, only) {
     if (t.id === 'submit') return submit();
     if (t.id === 'prev') return go(-1);
     if (t.id === 'next') return next();
+    if (t.id === 'forgot') { again(cur()); return next(); }
     if (t.id === 'say') { if (mode === 'speak' && !done.has(i)) { peek = true; reveal(); } return say(); } // 说出来：先听答案就等于揭晓
     if (t.id === 'show') return reveal();
     if (t.id === 'mic') return mic();
@@ -344,6 +354,7 @@ export async function renderStudy(view, id, given, only) {
     if (c === keys.say) { if (mode === 'speak' && !done.has(i)) { peek = true; reveal(); } say(); }
     else if (c === keys.show) reveal();
     else if (c === keys.mark) $('#mark').click();
+    else if (e.key === 'Backspace' && mode === 'learn' && revealed) { again(cur()); next(); }
     else if (e.key === 'Enter') isTyped(mode) ? submit() : (mode === 'learn' || mode === 'speak') && !revealed && !done.has(i) ? reveal() : next();
     else if (isPick(mode) && /^[1-4]$/.test(e.key) && choices[e.key - 1]) choose(choices[e.key - 1]);
     else return;
