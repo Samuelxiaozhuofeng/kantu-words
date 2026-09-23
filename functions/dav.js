@@ -7,9 +7,7 @@ export async function onRequest({ request }) {
   if (!okHost || !t.pathname.includes('/kantu-sync/') || !METHODS.has(request.method) || !request.headers.get('Authorization')) return new Response('not allowed', { status: 400 });
   const headers = {};
   for (const k of ['Authorization', 'Depth', 'If-Match', 'If-None-Match', 'Content-Type']) { const v = request.headers.get(k); if (v) headers[k] = v; }
-  let r;
-  try { r = await fetch(t, { method: request.method, headers, body: request.method === 'PUT' ? await request.arrayBuffer() : undefined }); }
-  catch (e) { return new Response('网盘连不上：' + e.message, { status: 502, headers: { 'Cache-Control': 'no-store' } }); }
+  const r = await fetch(t, { method: request.method, headers, body: request.method === 'PUT' ? await request.arrayBuffer() : undefined });
   const out = new Headers({ 'Cache-Control': 'no-store', 'Content-Type': r.headers.get('Content-Type') || 'application/octet-stream' });
   if (r.headers.get('ETag')) out.set('ETag', r.headers.get('ETag'));
   return new Response(r.body, { status: r.status, headers: out });
